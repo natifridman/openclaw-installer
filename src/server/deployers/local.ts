@@ -37,7 +37,8 @@ import { buildSandboxConfig } from "./sandbox.js";
 import { buildSandboxToolPolicy } from "./tool-policy.js";
 import { loadAgentSourceBundle } from "./agent-source.js";
 
-const DEFAULT_IMAGE = process.env.OPENCLAW_IMAGE || "ghcr.io/openclaw/openclaw:latest";
+const DEFAULT_IMAGE = process.env.OPENCLAW_IMAGE || "quay.io/aicatalyst/openclaw:latest";
+const DEFAULT_VERTEX_IMAGE = process.env.OPENCLAW_VERTEX_IMAGE || "quay.io/aicatalyst/openclaw:vertex-anthropic";
 const DEFAULT_PORT = 18789;
 const GCP_SA_CONTAINER_PATH = "/home/node/.openclaw/gcp/sa.json";
 const LITELLM_CONFIG_PATH = "/home/node/.openclaw/litellm/config.yaml";
@@ -46,6 +47,20 @@ const SANDBOX_SSH_DIR = "/home/node/.openclaw/sandbox-ssh";
 const SANDBOX_SSH_IDENTITY_CONTAINER_PATH = `${SANDBOX_SSH_DIR}/identity`;
 const SANDBOX_SSH_CERTIFICATE_CONTAINER_PATH = `${SANDBOX_SSH_DIR}/certificate.pub`;
 const SANDBOX_SSH_KNOWN_HOSTS_CONTAINER_PATH = `${SANDBOX_SSH_DIR}/known_hosts`;
+
+/** Returns true if the image tag is `:latest` or absent — mutable tags that should always be pulled. */
+export function shouldAlwaysPull(image: string): boolean {
+  // Digest references (image@sha256:...) are immutable — never need to re-pull
+  if (image.includes("@")) return false;
+  const ref = image.split("/").pop() || image;
+  const tag = ref.includes(":") ? ref.split(":").pop() : undefined;
+  return !tag || tag === "latest";
+}
+
+function resolveImage(config: DeployConfig): string {
+  if (config.image) return config.image;
+  return config.vertexEnabled ? DEFAULT_VERTEX_IMAGE : DEFAULT_IMAGE;
+}
 
 function tryParseProjectId(saJson: string): string {
   try {
@@ -112,7 +127,7 @@ function deriveModel(config: DeployConfig): string {
       : "google-vertex/gemini-2.5-pro";
   }
   if (config.openaiApiKey) {
-    return "openai/gpt-5";
+    return "openai/gpt-5.4";
   }
   if (config.modelEndpoint) {
     return "openai/default";
@@ -390,8 +405,9 @@ function buildRunArgs(
   otelEnvVars?: Record<string, string>,
 ): string[] {
   const { effectiveConfig } = prepareLocalSandboxSshConfig(config);
-  const useProxy = shouldUseLitellmProxy(config) && !!litellmMasterKey;
-  const useOtelSidecar = shouldUseOtel(config) && !!otelEnvVars;
+  const image = resolveImage(effectiveConfig);
+  const useProxy = shouldUseLitellmProxy(effectiveConfig) && !!litellmMasterKey;
+  const useOtelSidecar = shouldUseOtel(effectiveConfig) && !!otelEnvVars;
   const hasSidecars = useProxy || useOtelSidecar;
   const isPodman = runtime === "podman";
 
@@ -399,18 +415,20 @@ function buildRunArgs(
     "run",
     "-d",
     "--rm",
+    // For mutable tags (:latest/untagged), check for newer image at startup (Fix for #28)
+    ...(shouldAlwaysPull(image) ? ["--pull=newer"] : []),
     "--name",
     name,
   ];
 
   if (hasSidecars && isPodman) {
     // Podman: gateway runs in the same pod as sidecars (port is on the pod)
-    runArgs.push("--pod", podName(config));
+    runArgs.push("--pod", podName(effectiveConfig));
   } else if (hasSidecars && !isPodman) {
     // Docker: share the first sidecar's network namespace
     const networkContainer = useProxy
-      ? litellmContainerName(config)
-      : otelContainerName(config);
+      ? litellmContainerName(effectiveConfig)
+      : otelContainerName(effectiveConfig);
     runArgs.push("--network", `container:${networkContainer}`);
   } else {
     runArgs.push("-p", `${port}:18789`);
@@ -418,8 +436,8 @@ function buildRunArgs(
 
   runArgs.push(
     "--label", OPENCLAW_LABELS.managed,
-    "--label", OPENCLAW_LABELS.prefix(config.prefix || "openclaw"),
-    "--label", OPENCLAW_LABELS.agent(config.agentName),
+    "--label", OPENCLAW_LABELS.prefix(effectiveConfig.prefix || "openclaw"),
+    "--label", OPENCLAW_LABELS.agent(effectiveConfig.agentName),
   );
 
   const env: Record<string, string> = {
@@ -482,7 +500,7 @@ function buildRunArgs(
   }
 
   runArgs.push("-v", `${volumeName(effectiveConfig)}:/home/node/.openclaw`);
-  runArgs.push(effectiveConfig.image || DEFAULT_IMAGE);
+  runArgs.push(image);
 
   // Bind to lan (0.0.0.0) so port mapping works from host into pod/container
   runArgs.push("node", "dist/index.js", "gateway", "--bind", "lan", "--port", "18789");
@@ -507,12 +525,18 @@ export class LocalDeployer implements Deployer {
     // Remove existing container with same name (in case --rm didn't fire)
     await removeContainer(runtime, name);
 
-    const image = config.image || DEFAULT_IMAGE;
+    const image = resolveImage(config);
 
-    // Check if image exists locally before pulling
+    // Pull the image if it doesn't exist locally.
+    // For mutable tags (:latest/untagged), --pull=newer on `podman run` handles
+    // checking for updates efficiently via digest comparison (Fix for #28).
     try {
       await execFileAsync(runtime, ["image", "exists", image]);
-      log(`Using local image: ${image}`);
+      if (shouldAlwaysPull(image)) {
+        log(`Image ${image} found locally; will check for updates at startup`);
+      } else {
+        log(`Using local image: ${image}`);
+      }
     } catch {
       log(`Pulling ${image}...`);
       const pull = await runCommand(runtime, ["pull", image], log);
@@ -932,11 +956,12 @@ something that requires the user's attention.`;
   async start(result: DeployResult, log: LogCallback): Promise<DeployResult> {
     const runtime = result.config.containerRuntime ?? (await detectRuntime());
     if (!runtime) throw new Error("No container runtime found");
-    const effectiveConfig: DeployConfig = { ...result.config };
+    const localSandboxPrepared = prepareLocalSandboxSshConfig(result.config);
+    const effectiveConfig = localSandboxPrepared.effectiveConfig;
     const name = result.containerId ?? containerName(effectiveConfig);
     const port = effectiveConfig.port ?? DEFAULT_PORT;
     const vol = volumeName(effectiveConfig);
-    const image = effectiveConfig.image || DEFAULT_IMAGE;
+    const image = resolveImage(effectiveConfig);
 
     // Copy updated agent files from host into volume before starting
     const isContainerized = existsSync("/.dockerenv") || existsSync("/run/.containerenv");
@@ -965,7 +990,6 @@ something that requires the user's attention.`;
       ], log);
     }
 
-    const localSandboxPrepared = prepareLocalSandboxSshConfig(effectiveConfig);
     const sshMaterialScript = [
       `mkdir -p '${SANDBOX_SSH_DIR}'`,
       ...(localSandboxPrepared.effectiveConfig.sandboxSshIdentity
@@ -1215,7 +1239,7 @@ something that requires the user's attention.`;
         `OPENCLAW_PREFIX=${config.prefix || ""}`,
         `OPENCLAW_AGENT_NAME=${config.agentName}`,
         `OPENCLAW_DISPLAY_NAME=${config.agentDisplayName || config.agentName}`,
-        `OPENCLAW_IMAGE=${config.image || DEFAULT_IMAGE}`,
+        `OPENCLAW_IMAGE=${resolveImage(config)}`,
         `OPENCLAW_PORT=${config.port ?? DEFAULT_PORT}`,
         `OPENCLAW_VOLUME=${volumeName(config)}`,
         `OPENCLAW_CONTAINER=${name}`,
@@ -1335,7 +1359,7 @@ something that requires the user's attention.`;
 
     const name = result.containerId ?? containerName(result.config);
     const vol = volumeName(result.config);
-    const image = result.config.image || DEFAULT_IMAGE;
+    const image = resolveImage(result.config);
     const agentId = `${result.config.prefix || "openclaw"}_${result.config.agentName}`;
     const workspaceDir = `/home/node/.openclaw/workspace-${agentId}`;
 
