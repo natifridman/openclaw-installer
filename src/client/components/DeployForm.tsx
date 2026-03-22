@@ -199,6 +199,7 @@ export default function DeployForm({ onDeployStarted }: Props) {
     telegramBotToken: "",
     telegramAllowFrom: "",
     // Cron jobs
+    cronEnabled: false,
     cronJobsDir: "",
     // Agent security
     subagentPolicy: "none" as "none" | "self" | "unrestricted",
@@ -460,6 +461,7 @@ export default function DeployForm({ onDeployStarted }: Props) {
       otelEndpoint: v("OTEL_ENDPOINT", "otelEndpoint") || prev.otelEndpoint,
       otelExperimentId: v("OTEL_EXPERIMENT_ID", "otelExperimentId") || prev.otelExperimentId,
       otelImage: v("OTEL_IMAGE", "otelImage") || prev.otelImage,
+      cronEnabled: vars.cronEnabled === "true" || !!v("CRON_JOBS_DIR", "cronJobsDir") || prev.cronEnabled,
       cronJobsDir: v("CRON_JOBS_DIR", "cronJobsDir") || prev.cronJobsDir,
       subagentPolicy: (vars.subagentPolicy as "none" | "self" | "unrestricted") || prev.subagentPolicy,
     }));
@@ -625,7 +627,7 @@ export default function DeployForm({ onDeployStarted }: Props) {
         otelJaeger: config.otelEnabled ? config.otelJaeger || undefined : undefined,
         otelEndpoint: config.otelEnabled ? trimToUndefined(config.otelEndpoint) : undefined,
         otelExperimentId: config.otelEnabled ? trimToUndefined(config.otelExperimentId) : undefined,
-        cronJobsDir: trimToUndefined(config.cronJobsDir),
+        cronJobsDir: config.cronEnabled ? trimToUndefined(config.cronJobsDir) : undefined,
         subagentPolicy: config.subagentPolicy !== "none" ? config.subagentPolicy : undefined,
       };
 
@@ -1669,19 +1671,37 @@ export default function DeployForm({ onDeployStarted }: Props) {
         <h3 style={{ marginTop: "1.5rem" }}>Cron Jobs</h3>
 
         <div className="form-group">
-          <label>Cron Jobs Directory</label>
-          <input
-            type="text"
-            placeholder="/path/to/cron-jobs (optional)"
-            value={config.cronJobsDir}
-            onChange={(e) => update("cronJobsDir", e.target.value)}
-          />
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <input
+              type="checkbox"
+              checked={config.cronEnabled}
+              onChange={(e) =>
+                setConfig((prev) => ({ ...prev, cronEnabled: e.target.checked }))
+              }
+              style={{ width: "auto" }}
+            />
+            Enable cron jobs
+          </label>
           <div className="hint">
-            Directory containing cron job definitions.
-            All files in this directory will be loaded into the agent's <code>~/.openclaw/cron/</code>.
-            Cron is enabled automatically when a directory is specified.
+            Allow the agent to run scheduled tasks from a cron jobs directory.
           </div>
         </div>
+
+        {config.cronEnabled && (
+          <div className="form-group">
+            <label>Cron Jobs Directory</label>
+            <input
+              type="text"
+              placeholder="/path/to/cron-jobs"
+              value={config.cronJobsDir}
+              onChange={(e) => update("cronJobsDir", e.target.value)}
+            />
+            <div className="hint">
+              Directory containing cron job definitions.
+              All files in this directory will be loaded into the agent's <code>~/.openclaw/cron/</code>.
+            </div>
+          </div>
+        )}
 
         <div className="form-group">
           <label>Subagent spawning</label>
