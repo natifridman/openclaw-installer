@@ -24,6 +24,7 @@ const plugin = {
       description: "Deploy to an OpenShift cluster with OAuth proxy and Routes",
       deployer: new OpenShiftDeployer(),
       detect: isOpenShift,
+      unavailableReason: "Not connected to an OpenShift cluster.",
       priority: 10,
     });
   },

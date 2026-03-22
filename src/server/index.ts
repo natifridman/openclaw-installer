@@ -7,7 +7,7 @@ import deployRoutes from "./routes/deploy.js";
 import statusRoutes from "./routes/status.js";
 import agentsRoutes from "./routes/agents.js";
 import { detectRuntime } from "./services/container.js";
-import { isClusterReachable, currentContext, currentNamespace } from "./services/k8s.js";
+import { isClusterReachable, currentContext, currentNamespace, resetKubeConfig } from "./services/k8s.js";
 import { stopAllK8sPortForwards } from "./services/k8s-port-forward.js";
 import { detectGcpDefaults } from "./services/gcp.js";
 import { readdir, readFile } from "node:fs/promises";
@@ -25,6 +25,7 @@ registry.register({
   description: "Run OpenClaw locally with podman/docker",
   deployer: new LocalDeployer(),
   detect: async () => !!(await detectRuntime()),
+  unavailableReason: "No container runtime found. Install podman or docker.",
   priority: 0,
   builtIn: true,
 });
@@ -34,6 +35,7 @@ registry.register({
   description: "Deploy to a Kubernetes cluster",
   deployer: new KubernetesDeployer(),
   detect: async () => isClusterReachable(),
+  unavailableReason: "No Kubernetes cluster detected. Configure kubectl and ensure you are logged in.",
   priority: 0,
   builtIn: true,
 });
@@ -56,6 +58,7 @@ app.use("/api/agents", agentsRoutes);
 
 // Health check + environment defaults for the frontend
 app.get("/api/health", async (_req, res) => {
+  resetKubeConfig();
   const runtime = await detectRuntime();
   const k8sReachable = await isClusterReachable();
   const detected = await registry.detect();
@@ -68,14 +71,18 @@ app.get("/api/health", async (_req, res) => {
     k8sNamespace: k8sReachable ? currentNamespace() : "",
     isOpenShift: detected.some((d) => d.mode === "openshift"),
     version: "0.1.0",
-    deployers: registry.list().map((reg) => ({
-      mode: reg.mode,
-      title: reg.title,
-      description: reg.description,
-      available: detected.some((d) => d.mode === reg.mode),
-      priority: reg.priority ?? 0,
-      builtIn: reg.builtIn ?? false,
-    })),
+    deployers: registry.list().map((reg) => {
+      const available = detected.some((d) => d.mode === reg.mode);
+      return {
+        mode: reg.mode,
+        title: reg.title,
+        description: reg.description,
+        available,
+        unavailableReason: !available ? (reg.unavailableReason || "") : "",
+        priority: reg.priority ?? 0,
+        builtIn: reg.builtIn ?? false,
+      };
+    }),
     defaults: {
       hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
       hasOpenaiKey: !!process.env.OPENAI_API_KEY,

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { validateAgentName } from "../../shared/validate-agent-name.js";
 
 type InferenceProvider = "anthropic" | "openai" | "vertex-anthropic" | "vertex-google" | "custom-endpoint";
@@ -15,6 +15,7 @@ interface DeployerInfo {
   title: string;
   description: string;
   available: boolean;
+  unavailableReason?: string;
   priority: number;
   builtIn: boolean;
 }
@@ -255,13 +256,16 @@ export default function DeployForm({ onDeployStarted }: Props) {
 
   const [gcpDefaults, setGcpDefaults] = useState<GcpDefaults | null>(null);
   const [gcpDefaultsFetched, setGcpDefaultsFetched] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const isClusterMode = mode === "kubernetes" || mode === "openshift";
   const isVertex = inferenceProvider === "vertex-anthropic" || inferenceProvider === "vertex-google";
   const displayedDeployers = useMemo(
     () => {
       // Hide unavailable plugin deployers (issue #10) — only built-in
-      // deployers should appear as disabled; plugin deployers are hidden entirely.
+      // deployers should appear as disabled; plugin deployers are hidden
+      // entirely so we don't promote commercial offerings to users who
+      // aren't already using them.
       const visible = deployers.filter((d) => d.builtIn || d.available);
       return defaults?.isOpenShift
         ? visible.filter((d) => d.mode !== "kubernetes")
@@ -287,8 +291,10 @@ export default function DeployForm({ onDeployStarted }: Props) {
       .catch(() => {});
   }, [isVertex, gcpDefaultsFetched]);
 
-  // Fetch server defaults (detected env vars + K8s availability)
-  useEffect(() => {
+  // Re-detect environment (K8s availability, deployers, env vars).
+  // Called on mount, on tab focus, and via the manual Refresh button.
+  const refreshEnvironment = useCallback((isInitial = false) => {
+    setRefreshing(true);
     fetch("/api/health")
       .then((r) => r.json())
       .then((data) => {
@@ -307,25 +313,34 @@ export default function DeployForm({ onDeployStarted }: Props) {
             return (b.priority ?? 0) - (a.priority ?? 0);
           });
           setDeployers(sorted);
-          if (sorted.length > 0 && sorted[0].available) {
+          // Only auto-select mode on first load
+          if (isInitial && sorted.length > 0 && sorted[0].available) {
             setMode(sorted[0].mode);
           }
         }
 
-        if (d.prefix) {
-          setConfig((prev) => ({ ...prev, prefix: d.prefix }));
-        }
-        if (d.modelEndpoint) {
-          setConfig((prev) => ({ ...prev, modelEndpoint: d.modelEndpoint }));
-          setInferenceProvider("custom-endpoint");
-        } else if (d.hasOpenaiKey && !d.hasAnthropicKey) {
-          setInferenceProvider("openai");
-        }
-        if (d.image) {
-          setConfig((prev) => ({ ...prev, image: d.image }));
+        if (isInitial) {
+          if (d.prefix) {
+            setConfig((prev) => ({ ...prev, prefix: d.prefix }));
+          }
+          if (d.modelEndpoint) {
+            setConfig((prev) => ({ ...prev, modelEndpoint: d.modelEndpoint }));
+            setInferenceProvider("custom-endpoint");
+          } else if (d.hasOpenaiKey && !d.hasAnthropicKey) {
+            setInferenceProvider("openai");
+          }
+          if (d.image) {
+            setConfig((prev) => ({ ...prev, image: d.image }));
+          }
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setRefreshing(false));
+  }, []);
+
+  // Initial fetch
+  useEffect(() => {
+    refreshEnvironment(true);
 
     // Load saved configs from ~/.openclaw/installer/
     fetch("/api/configs")
@@ -334,7 +349,18 @@ export default function DeployForm({ onDeployStarted }: Props) {
         setSavedConfigs(configs);
       })
       .catch(() => {});
-  }, []);
+  }, [refreshEnvironment]);
+
+  // Re-detect environment when the browser tab regains focus
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshEnvironment();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [refreshEnvironment]);
 
   useEffect(() => {
     if (defaults?.isOpenShift && mode === "kubernetes") {
@@ -887,6 +913,17 @@ export default function DeployForm({ onDeployStarted }: Props) {
   return (
     <div>
       {/* Mode selector */}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.5rem" }}>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          style={{ fontSize: "0.8rem", padding: "0.3rem 0.6rem" }}
+          disabled={refreshing}
+          onClick={() => refreshEnvironment()}
+        >
+          {refreshing ? "Refreshing\u2026" : "\u21BB Refresh Environment"}
+        </button>
+      </div>
       <div className="mode-grid">
         {displayedDeployers.map((m) => {
           const isSelected = mode === m.mode;
@@ -903,6 +940,9 @@ export default function DeployForm({ onDeployStarted }: Props) {
               <div className="mode-icon">{MODE_ICONS[m.mode] || "🔌"}</div>
               <div className="mode-title">{m.title}</div>
               <div className="mode-desc">{m.description}</div>
+              {!m.available && m.unavailableReason && (
+                <div className="mode-unavailable-reason">{m.unavailableReason}</div>
+              )}
               {isSelected && <div className="mode-selected-badge">Selected</div>}
             </div>
           );
