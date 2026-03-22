@@ -9,6 +9,7 @@ interface PluginInfo {
   available: boolean;
   builtIn: boolean;
   priority: number;
+  supersededBy?: string;
 }
 
 interface PluginLoadError {
@@ -178,21 +179,27 @@ function PluginRow({
   toggling: string | null;
   onToggle: (mode: string, enabled: boolean) => void;
 }) {
+  const isSuperseded = plugin.enabled && plugin.supersededBy;
+
   const statusColor = !plugin.enabled
     ? "var(--text-muted)"
-    : plugin.available
-      ? "var(--success)"
-      : "var(--warning)";
+    : isSuperseded
+      ? "var(--text-muted)"
+      : plugin.available
+        ? "var(--success)"
+        : "var(--warning)";
 
   const statusLabel = !plugin.enabled
     ? "Disabled"
-    : plugin.available
-      ? "Active"
-      : "Unavailable";
+    : isSuperseded
+      ? "Superseded"
+      : plugin.available
+        ? "Active"
+        : "Unavailable";
 
   return (
     <div className="instance-row">
-      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flex: 1, opacity: plugin.enabled ? 1 : 0.55 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flex: 1, opacity: plugin.enabled && !isSuperseded ? 1 : 0.55 }}>
         <div style={{ fontSize: "1.5rem", width: "2rem", textAlign: "center" }}>
           {MODE_ICONS[plugin.mode] || "\uD83D\uDD0C"}
         </div>
@@ -205,6 +212,11 @@ function PluginRow({
           </div>
           <div className="instance-meta">
             {plugin.description}
+            {isSuperseded && (
+              <span style={{ marginLeft: "0.5rem", color: "var(--text-muted)", fontStyle: "italic" }}>
+                {" \u2022 "}Superseded by {plugin.supersededBy}
+              </span>
+            )}
             <span style={{ marginLeft: "0.5rem" }}>
               {" \u2022 "}
               <span style={{
@@ -222,7 +234,7 @@ function PluginRow({
       </div>
       <div className="instance-actions" style={{ alignItems: "center", gap: "0.75rem" }}>
         <span
-          className={`badge ${!plugin.enabled ? "badge-stopped" : plugin.available ? "badge-running" : "badge-deploying"}`}
+          className={`badge ${!plugin.enabled ? "badge-stopped" : isSuperseded ? "badge-stopped" : plugin.available ? "badge-running" : "badge-deploying"}`}
           style={{ minWidth: "5rem", textAlign: "center" }}
         >
           <span style={{

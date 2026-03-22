@@ -127,6 +127,72 @@ describe("GET /api/plugins", () => {
   });
 });
 
+// Regression tests for issue #46: Kubernetes superseded by OpenShift
+describe("GET /api/plugins — supersededBy (issue #46)", () => {
+  beforeEach(() => {
+    vi.mocked(getDisabledModes).mockReset().mockResolvedValue([]);
+    vi.mocked(setModeDisabled).mockReset().mockResolvedValue(undefined);
+  });
+
+  it("marks kubernetes as supersededBy openshift when openshift is detected and enabled", async () => {
+    registry.register({
+      mode: "kubernetes",
+      title: "Kubernetes",
+      description: "Deploy to K8s",
+      deployer: stubDeployer(),
+      detect: async () => true,
+      builtIn: true,
+    });
+    registry.register({
+      mode: "openshift",
+      title: "OpenShift",
+      description: "Deploy to OpenShift",
+      deployer: stubDeployer(),
+      detect: async () => true,
+      builtIn: false,
+      priority: 10,
+    });
+
+    const res = mockRes();
+    await getPlugins(mockReq(), res);
+
+    const k8s = res.body.plugins.find((p: any) => p.mode === "kubernetes");
+    expect(k8s.supersededBy).toBe("openshift");
+
+    const openshift = res.body.plugins.find((p: any) => p.mode === "openshift");
+    expect(openshift.supersededBy).toBeUndefined();
+  });
+
+  it("does not mark kubernetes as superseded when openshift is disabled", async () => {
+    vi.mocked(getDisabledModes).mockResolvedValue(["openshift"]);
+
+    const res = mockRes();
+    await getPlugins(mockReq(), res);
+
+    const k8s = res.body.plugins.find((p: any) => p.mode === "kubernetes");
+    expect(k8s.supersededBy).toBeUndefined();
+  });
+
+  it("does not mark kubernetes as superseded when openshift is not detected", async () => {
+    // Re-register openshift with detect returning false
+    registry.register({
+      mode: "openshift",
+      title: "OpenShift",
+      description: "Deploy to OpenShift",
+      deployer: stubDeployer(),
+      detect: async () => false,
+      builtIn: false,
+      priority: 10,
+    });
+
+    const res = mockRes();
+    await getPlugins(mockReq(), res);
+
+    const k8s = res.body.plugins.find((p: any) => p.mode === "kubernetes");
+    expect(k8s.supersededBy).toBeUndefined();
+  });
+});
+
 describe("POST /api/plugins/:mode/disable", () => {
   beforeEach(() => {
     vi.mocked(getDisabledModes).mockReset().mockResolvedValue([]);

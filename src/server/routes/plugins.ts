@@ -10,6 +10,11 @@ router.get("/", async (_req, res) => {
   const detectedModes = new Set(detected.map((d) => d.mode));
   const disabledModes = new Set(await getDisabledModes());
 
+  // Fix for #46: when OpenShift is detected and enabled, mark Kubernetes as
+  // superseded so the Plugins tab can reflect the same hiding the Deploy tab does.
+  const openshiftActive =
+    detectedModes.has("openshift") && !disabledModes.has("openshift");
+
   const plugins = registry.list().map((reg) => ({
     mode: reg.mode,
     title: reg.title,
@@ -19,6 +24,9 @@ router.get("/", async (_req, res) => {
     available: detectedModes.has(reg.mode),
     builtIn: reg.builtIn ?? false,
     priority: reg.priority ?? 0,
+    ...(reg.mode === "kubernetes" && openshiftActive
+      ? { supersededBy: "openshift" }
+      : {}),
   }));
 
   res.json({

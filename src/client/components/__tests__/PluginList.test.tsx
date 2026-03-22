@@ -183,4 +183,51 @@ describe("PluginList", () => {
     expect(screen.getAllByText("Built-in").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Provider Plugin")).toBeTruthy();
   });
+
+  // Regression tests for issue #46: Kubernetes superseded by OpenShift
+  it("shows Superseded badge when plugin has supersededBy field", async () => {
+    const response = {
+      plugins: [
+        { mode: "kubernetes", title: "Kubernetes", description: "Deploy to K8s", source: "built-in", enabled: true, available: true, builtIn: true, priority: 0, supersededBy: "openshift" },
+        { mode: "openshift", title: "OpenShift", description: "Deploy to OpenShift", source: "provider-plugin", enabled: true, available: true, builtIn: false, priority: 10 },
+      ],
+      errors: [],
+    };
+    global.fetch = mockFetch(response);
+    render(<PluginList />);
+
+    await screen.findByText("Kubernetes");
+    expect(screen.getByText("Superseded")).toBeTruthy();
+    expect(screen.getByText(/Superseded by openshift/)).toBeTruthy();
+  });
+
+  it("does not show Superseded when plugin has no supersededBy field", async () => {
+    const response = {
+      plugins: [
+        { mode: "kubernetes", title: "Kubernetes", description: "Deploy to K8s", source: "built-in", enabled: true, available: true, builtIn: true, priority: 0 },
+      ],
+      errors: [],
+    };
+    global.fetch = mockFetch(response);
+    render(<PluginList />);
+
+    await screen.findByText("Kubernetes");
+    expect(screen.getByText("Active")).toBeTruthy();
+    expect(screen.queryByText("Superseded")).toBeNull();
+  });
+
+  it("does not show Superseded when plugin is disabled even with supersededBy", async () => {
+    const response = {
+      plugins: [
+        { mode: "kubernetes", title: "Kubernetes", description: "Deploy to K8s", source: "built-in", enabled: false, available: true, builtIn: true, priority: 0, supersededBy: "openshift" },
+      ],
+      errors: [],
+    };
+    global.fetch = mockFetch(response);
+    render(<PluginList />);
+
+    await screen.findByText("Kubernetes");
+    expect(screen.getByText("Disabled")).toBeTruthy();
+    expect(screen.queryByText("Superseded")).toBeNull();
+  });
 });
