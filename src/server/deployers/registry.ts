@@ -7,6 +7,7 @@ export interface DeployerRegistration {
   description: string;
   deployer: Deployer;
   detect?: () => Promise<boolean>;
+  unavailableReason?: string;
   priority?: number;
   builtIn?: boolean;
 }

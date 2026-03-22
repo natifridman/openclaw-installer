@@ -8,6 +8,7 @@ interface DeployerInfo {
   title: string;
   description: string;
   available: boolean;
+  unavailableReason?: string;
   priority: number;
   builtIn: boolean;
 }
@@ -759,6 +760,9 @@ export default function DeployForm({ onDeployStarted }: Props) {
               <div className="mode-icon">{MODE_ICONS[m.mode] || "🔌"}</div>
               <div className="mode-title">{m.title}</div>
               <div className="mode-desc">{m.description}</div>
+              {!m.available && m.unavailableReason && (
+                <div className="mode-unavailable-reason">{m.unavailableReason}</div>
+              )}
               {isSelected && <div className="mode-selected-badge">Selected</div>}
             </div>
           );
