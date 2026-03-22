@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import DeployForm from "../DeployForm";
 
 // Stub fetch for /api/health to return deployer data
@@ -67,5 +67,26 @@ describe("DeployForm deployer visibility (issue #10)", () => {
 
     // Available plugin deployer should be visible
     expect(screen.getByText("OpenShift")).toBeTruthy();
+  });
+
+  it("does not auto-fill the default cluster namespace into the form", async () => {
+    global.fetch = mockHealthResponse(
+      [
+        { mode: "local", title: "This Machine", description: "Run locally", available: true, priority: 0, builtIn: true },
+        { mode: "openshift", title: "OpenShift", description: "Deploy to OpenShift", available: true, priority: 10, builtIn: false },
+      ],
+      {
+        k8sAvailable: true,
+        k8sNamespace: "default",
+        isOpenShift: true,
+      },
+    );
+
+    render(<DeployForm onDeployStarted={() => {}} />);
+
+    const input = await screen.findByLabelText("Project / Namespace") as HTMLInputElement;
+    await waitFor(() => {
+      expect(input.value).not.toBe("default");
+    });
   });
 });

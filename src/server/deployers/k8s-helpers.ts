@@ -26,7 +26,10 @@ export function tryParseProjectId(saJson: string): string {
 
 export function namespaceName(config: DeployConfig): string {
   const prefix = config.prefix || "openclaw";
-  const ns = config.namespace || `${prefix}-${config.agentName}-openclaw`;
+  const explicitNamespace = config.namespace?.trim().toLowerCase();
+  const ns = explicitNamespace && explicitNamespace !== "default"
+    ? explicitNamespace
+    : `${prefix}-${config.agentName}-openclaw`;
   return ns.toLowerCase();
 }
 
