@@ -34,7 +34,7 @@ describe("DeployForm deployer visibility (issue #10)", () => {
     vi.restoreAllMocks();
   });
 
-  it("hides unavailable plugin deployers", async () => {
+  it("shows unavailable plugin deployers as disabled", async () => {
     global.fetch = mockHealthResponse([
       { mode: "local", title: "This Machine", description: "Run locally", available: true, priority: 0, builtIn: true },
       { mode: "kubernetes", title: "Kubernetes", description: "Deploy to K8s", available: false, priority: 0, builtIn: true },
@@ -47,11 +47,11 @@ describe("DeployForm deployer visibility (issue #10)", () => {
     const localCard = await screen.findByText("This Machine");
     expect(localCard).toBeTruthy();
 
-    // Built-in kubernetes should still appear even though unavailable
+    // Built-in kubernetes should appear even though unavailable
     expect(screen.getByText("Kubernetes")).toBeTruthy();
 
-    // Plugin deployer (openshift) should be hidden when unavailable
-    expect(screen.queryByText("OpenShift")).toBeNull();
+    // Plugin deployer (openshift) should also be visible but disabled
+    expect(screen.getByText("OpenShift")).toBeTruthy();
   });
 
   it("shows available plugin deployers", async () => {
@@ -66,7 +66,7 @@ describe("DeployForm deployer visibility (issue #10)", () => {
     expect(localCard).toBeTruthy();
 
     // Available plugin deployer should be visible
-    expect(screen.getByText("OpenShift")).toBeTruthy();
+    expect(screen.getAllByText("OpenShift").length).toBeGreaterThan(0);
   });
 
   it("does not auto-fill the default cluster namespace into the form", async () => {

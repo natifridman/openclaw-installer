@@ -7,7 +7,7 @@ import deployRoutes from "./routes/deploy.js";
 import statusRoutes from "./routes/status.js";
 import agentsRoutes from "./routes/agents.js";
 import { detectRuntime } from "./services/container.js";
-import { isClusterReachable, currentContext, currentNamespace } from "./services/k8s.js";
+import { isClusterReachable, currentContext, currentNamespace, resetKubeConfig } from "./services/k8s.js";
 import { stopAllK8sPortForwards } from "./services/k8s-port-forward.js";
 import { detectGcpDefaults } from "./services/gcp.js";
 import { readdir, readFile } from "node:fs/promises";
@@ -58,6 +58,7 @@ app.use("/api/agents", agentsRoutes);
 
 // Health check + environment defaults for the frontend
 app.get("/api/health", async (_req, res) => {
+  resetKubeConfig();
   const runtime = await detectRuntime();
   const k8sReachable = await isClusterReachable();
   const detected = await registry.detect();
