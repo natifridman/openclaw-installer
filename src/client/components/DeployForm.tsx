@@ -465,7 +465,7 @@ export default function DeployForm({ onDeployStarted }: Props) {
   const derivedNamespace = deriveNamespace(config.prefix || defaults?.prefix || "", config.agentName);
   const suggestedNamespace = useMemo(() => {
     const ctxNs = defaults?.k8sNamespace?.trim();
-    if (defaults?.isOpenShift && ctxNs) {
+    if (defaults?.isOpenShift && ctxNs && ctxNs.toLowerCase() !== "default") {
       return ctxNs;
     }
     return derivedNamespace;

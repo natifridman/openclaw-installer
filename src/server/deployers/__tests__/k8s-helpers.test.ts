@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOpenClawConfig, deriveModel, normalizeModelRef } from "../k8s-helpers.js";
+import { buildOpenClawConfig, deriveModel, namespaceName, normalizeModelRef } from "../k8s-helpers.js";
 import type { DeployConfig } from "../types.js";
 
 function makeConfig(overrides: Partial<DeployConfig> = {}): DeployConfig {
@@ -12,6 +12,26 @@ function makeConfig(overrides: Partial<DeployConfig> = {}): DeployConfig {
 }
 
 describe("model config generation", () => {
+  it("never deploys into the default namespace implicitly", () => {
+    const config = makeConfig({
+      prefix: "alice",
+      agentName: "lynx",
+      namespace: "default",
+    });
+
+    expect(namespaceName(config)).toBe("alice-lynx-openclaw");
+  });
+
+  it("uses an explicit namespace when it is not default", () => {
+    const config = makeConfig({
+      prefix: "alice",
+      agentName: "lynx",
+      namespace: "team-space",
+    });
+
+    expect(namespaceName(config)).toBe("team-space");
+  });
+
   it("normalizes bare Anthropic model ids to provider/model refs", () => {
     const config = makeConfig({
       anthropicApiKey: "test-key",
