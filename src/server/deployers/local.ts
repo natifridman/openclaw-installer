@@ -252,7 +252,7 @@ function buildOpenClawConfig(config: DeployConfig, gatewayToken: string): string
         watchDebounceMs: 1000,
       },
     },
-    cron: { enabled: !!config.cronEnabled },
+    cron: { enabled: !!config.cronJobsDir },
   };
 
   const sandboxToolPolicy = buildSandboxToolPolicy(config);
@@ -703,7 +703,7 @@ something that requires the user's attention.`;
       // If user provided agent source files via mount, copy them in (overrides defaults)
       `for d in /tmp/agent-source/workspace-*; do if [ -d "$d" ]; then base="$(basename "$d")"; if [ "$base" = "workspace-main" ]; then dest='${workspaceDir}'; else dest="/home/node/.openclaw/$base"; fi; mkdir -p "$dest"; cp -r "$d"/* "$dest"/ 2>/dev/null || true; fi; done`,
       `if [ -d /tmp/agent-source/skills ]; then cp -r /tmp/agent-source/skills/* /home/node/.openclaw/skills/ 2>/dev/null || true; fi`,
-      `if [ -f /tmp/agent-source/cron/jobs.json ]; then mkdir -p /home/node/.openclaw/cron && cp /tmp/agent-source/cron/jobs.json /home/node/.openclaw/cron/jobs.json 2>/dev/null || true; fi`,
+      `if [ -d /tmp/cron-source ] && [ "$(ls -A /tmp/cron-source 2>/dev/null)" ]; then mkdir -p /home/node/.openclaw/cron && cp -r /tmp/cron-source/* /home/node/.openclaw/cron/ 2>/dev/null || true; fi`,
     ].join("\n");
 
     const initArgs = [
@@ -720,6 +720,12 @@ something that requires the user's attention.`;
     if (agentSourceDir) {
       initArgs.push("-v", `${agentSourceDir}:/tmp/agent-source:ro`);
       log(`Mounting agent source: ${agentSourceDir}`);
+    }
+
+    const cronJobsDir = normalizeHostPath(config.cronJobsDir);
+    if (cronJobsDir) {
+      initArgs.push("-v", `${cronJobsDir}:/tmp/cron-source:ro`);
+      log(`Mounting cron jobs: ${cronJobsDir}`);
     }
 
     initArgs.push(image, "sh", "-c", initScript);
@@ -1009,15 +1015,21 @@ something that requires the user's attention.`;
       const copyScript = [
         `cp /tmp/agent-source/workspace-${agentId}/* '${workspaceDir}/' 2>/dev/null || true`,
         `if [ -d /tmp/agent-source/skills ]; then mkdir -p /home/node/.openclaw/skills && cp -r /tmp/agent-source/skills/* /home/node/.openclaw/skills/ 2>/dev/null || true; fi`,
-        `if [ -f /tmp/agent-source/cron/jobs.json ]; then mkdir -p /home/node/.openclaw/cron && cp /tmp/agent-source/cron/jobs.json /home/node/.openclaw/cron/jobs.json 2>/dev/null || true; fi`,
+        `if [ -d /tmp/cron-source ] && [ "$(ls -A /tmp/cron-source 2>/dev/null)" ]; then mkdir -p /home/node/.openclaw/cron && cp -r /tmp/cron-source/* /home/node/.openclaw/cron/ 2>/dev/null || true; fi`,
       ].join("\n");
 
-      await runCommand(runtime, [
+      const startCopyArgs = [
         "run", "--rm",
         "-v", `${vol}:/home/node/.openclaw`,
         "-v", `${agentSourceDir}:/tmp/agent-source:ro`,
-        image, "sh", "-c", copyScript,
-      ], log);
+      ];
+      const cronJobsDirStart = normalizeHostPath(effectiveConfig.cronJobsDir);
+      if (cronJobsDirStart) {
+        startCopyArgs.push("-v", `${cronJobsDirStart}:/tmp/cron-source:ro`);
+      }
+      startCopyArgs.push(image, "sh", "-c", copyScript);
+
+      await runCommand(runtime, startCopyArgs, log);
     }
 
     const sshMaterialScript = [
@@ -1421,18 +1433,24 @@ something that requires the user's attention.`;
       `  mkdir -p /home/node/.openclaw/skills`,
       `  cp -rv /tmp/agent-source/skills/* /home/node/.openclaw/skills/ 2>/dev/null || true`,
       `fi`,
-      `if [ -f /tmp/agent-source/cron/jobs.json ]; then`,
+      `if [ -d /tmp/cron-source ] && [ "$(ls -A /tmp/cron-source 2>/dev/null)" ]; then`,
       `  mkdir -p /home/node/.openclaw/cron`,
-      `  cp -v /tmp/agent-source/cron/jobs.json /home/node/.openclaw/cron/jobs.json 2>/dev/null || true`,
+      `  cp -rv /tmp/cron-source/* /home/node/.openclaw/cron/ 2>/dev/null || true`,
       `fi`,
     ].join("\n");
 
-    const copyResult = await runCommand(runtime, [
+    const redeployCopyArgs = [
       "run", "--rm",
       "-v", `${vol}:/home/node/.openclaw`,
       "-v", `${agentSourceDir}:/tmp/agent-source:ro`,
-      image, "sh", "-c", copyScript,
-    ], log);
+    ];
+    const cronJobsDirRedeploy = normalizeHostPath(result.config.cronJobsDir);
+    if (cronJobsDirRedeploy) {
+      redeployCopyArgs.push("-v", `${cronJobsDirRedeploy}:/tmp/cron-source:ro`);
+    }
+    redeployCopyArgs.push(image, "sh", "-c", copyScript);
+
+    const copyResult = await runCommand(runtime, redeployCopyArgs, log);
 
     if (copyResult.code !== 0) {
       throw new Error("Failed to copy agent files to volume");

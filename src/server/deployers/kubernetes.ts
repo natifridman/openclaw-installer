@@ -1,11 +1,10 @@
 import * as k8s from "@kubernetes/client-node";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { v4 as uuid } from "uuid";
 import { coreApi, appsApi, loadKubeConfig, hasOtelOperator, k8sApiHttpCode } from "../services/k8s.js";
 import { ensureK8sPortForward } from "../services/k8s-port-forward.js";
-import { cronJobsFile, installerK8sInstanceDir, skillsDir } from "../paths.js";
+import { installerK8sInstanceDir, skillsDir } from "../paths.js";
 import { loadTextTree } from "../state-tree.js";
 import type {
   Deployer,
@@ -22,7 +21,6 @@ import {
   configMapManifest,
   agentConfigMapManifest,
   fileTreeConfigMapManifest,
-  fileConfigMapManifest,
   gcpSaSecretManifest,
   litellmConfigMapManifest,
   otelConfigMapManifest,
@@ -115,7 +113,9 @@ export class KubernetesDeployer implements Deployer {
     const { files: workspaceFiles } = loadWorkspaceFiles(config, log);
     const skillEntries = await loadTextTree(skillsDir()).catch(() => []);
     const agentTreeEntries = await loadAgentSourceWorkspaceTree(config.agentSourceDir).catch(() => []);
-    const cronJobsContent = await readFile(cronJobsFile(), "utf8").catch(() => undefined);
+    const cronEntries = config.cronJobsDir
+      ? await loadTextTree(config.cronJobsDir).catch(() => [])
+      : [];
 
     // 1. Namespace
     await applyNamespace(core, ns, log);
@@ -167,7 +167,7 @@ export class KubernetesDeployer implements Deployer {
       log,
     );
 
-    const cronCm = fileConfigMapManifest(ns, "openclaw-cron", "jobs.json", cronJobsContent);
+    const cronCm = fileTreeConfigMapManifest(ns, "openclaw-cron", cronEntries);
     await applyResource(
       () => core.readNamespacedConfigMap({ name: "openclaw-cron", namespace: ns }),
       () => core.createNamespacedConfigMap({ namespace: ns, body: cronCm }),
@@ -286,7 +286,7 @@ export class KubernetesDeployer implements Deployer {
     );
 
     // 7. Deployment
-    const dep = deploymentManifest(ns, config, otelViaOperator, skillEntries, agentTreeEntries, cronJobsContent);
+    const dep = deploymentManifest(ns, config, otelViaOperator, skillEntries, agentTreeEntries, cronEntries);
     await applyResource(
       () => apps.readNamespacedDeployment({ name: "openclaw", namespace: ns }),
       () => apps.createNamespacedDeployment({ namespace: ns, body: dep }),
@@ -402,7 +402,9 @@ export class KubernetesDeployer implements Deployer {
     const { files: workspaceFiles, fromHost } = loadWorkspaceFiles(result.config, log);
     const skillEntries = await loadTextTree(skillsDir()).catch(() => []);
     const agentTreeEntries = await loadAgentSourceWorkspaceTree(result.config.agentSourceDir).catch(() => []);
-    const cronJobsContent = await readFile(cronJobsFile(), "utf8").catch(() => undefined);
+    const cronEntries = result.config.cronJobsDir
+      ? await loadTextTree(result.config.cronJobsDir).catch(() => [])
+      : [];
     if (!fromHost) {
       log("No custom agent files found — using generated defaults");
     }
@@ -435,7 +437,7 @@ export class KubernetesDeployer implements Deployer {
       log,
     );
 
-    const cronCm = fileConfigMapManifest(ns, "openclaw-cron", "jobs.json", cronJobsContent);
+    const cronCm = fileTreeConfigMapManifest(ns, "openclaw-cron", cronEntries);
     await applyResource(
       () => core.readNamespacedConfigMap({ name: "openclaw-cron", namespace: ns }),
       () => core.createNamespacedConfigMap({ namespace: ns, body: cronCm }),
@@ -462,7 +464,7 @@ mkdir -p /home/node/.openclaw/workspace-${id}
 ${copyLines}
 find /agents-tree -mindepth 1 -type d -name 'workspace-*' -exec sh -c 'base="$(basename "$1")"; if [ "$base" = "workspace-main" ]; then dest="/home/node/.openclaw/workspace-${id}"; else dest="/home/node/.openclaw/$base"; fi; mkdir -p "$dest"; cp -r "$1"/* "$dest"/ 2>/dev/null || true' _ {} \\;
 cp -r /skills-src/. /home/node/.openclaw/skills/ 2>/dev/null || true
-cp /cron-src/jobs.json /home/node/.openclaw/cron/jobs.json 2>/dev/null || true
+cp -r /cron-src/. /home/node/.openclaw/cron/ 2>/dev/null || true
 chgrp -R 0 /home/node/.openclaw 2>/dev/null || true
 chmod -R g=u /home/node/.openclaw 2>/dev/null || true
 echo "Config initialized"
@@ -490,8 +492,8 @@ echo "Config initialized"
         path: "/spec/template/spec/volumes/4/configMap",
         value: {
           name: "openclaw-cron",
-          ...(cronJobsContent !== undefined
-            ? { items: [{ key: "jobs.json", path: "jobs.json" }] }
+          ...(cronEntries.length > 0
+            ? { items: cronEntries.map((entry) => ({ key: entry.key, path: entry.path })) }
             : {}),
         },
       },

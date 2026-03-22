@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deploymentManifest, fileConfigMapManifest, fileTreeConfigMapManifest } from "../k8s-manifests.js";
+import { deploymentManifest, fileTreeConfigMapManifest } from "../k8s-manifests.js";
 import type { DeployConfig } from "../types.js";
 import type * as k8s from "@kubernetes/client-node";
 
@@ -27,31 +27,29 @@ describe("k8s state sync manifests", () => {
     const skillsCm = fileTreeConfigMapManifest("openclaw-alpha-openclaw", "openclaw-skills", [
       { key: "f0", path: "briefing-bot/SKILL.md", content: "# Briefing Bot" },
     ]);
-    const cronCm = fileConfigMapManifest(
-      "openclaw-alpha-openclaw",
-      "openclaw-cron",
-      "jobs.json",
-      "{\"jobs\":[{\"name\":\"daily-brief\"}]}",
-    );
+    const cronCm = fileTreeConfigMapManifest("openclaw-alpha-openclaw", "openclaw-cron", [
+      { key: "f0", path: "jobs.json", content: "{\"jobs\":[{\"name\":\"daily-brief\"}]}" },
+    ]);
 
     expect(skillsCm.data).toEqual({ f0: "# Briefing Bot" });
-    expect(cronCm.data).toEqual({ "jobs.json": "{\"jobs\":[{\"name\":\"daily-brief\"}]}" });
+    expect(cronCm.data).toEqual({ f0: "{\"jobs\":[{\"name\":\"daily-brief\"}]}" });
   });
 
   it("mounts and copies skill and cron state into the PVC", () => {
+    const cronEntries = [{ key: "f0", path: "jobs.json", content: "{\"jobs\":[{\"name\":\"daily-brief\"}]}" }];
     const deployment = deploymentManifest(
       "openclaw-alpha-openclaw",
       config,
       false,
       [{ key: "f0", path: "briefing-bot/SKILL.md", content: "# Briefing Bot" }],
       [{ key: "f1", path: "workspace-main/AGENTS.md", content: "# Alpha" }],
-      "{\"jobs\":[{\"name\":\"daily-brief\"}]}",
+      cronEntries,
     );
 
     const initContainer = deployment.spec?.template.spec?.initContainers?.[0];
     expect(initContainer?.command?.[2]).toContain("find /agents-tree -mindepth 1 -type d -name 'workspace-*'");
     expect(initContainer?.command?.[2]).toContain("cp -r /skills-src/. /home/node/.openclaw/skills/");
-    expect(initContainer?.command?.[2]).toContain("cp /cron-src/jobs.json /home/node/.openclaw/cron/jobs.json");
+    expect(initContainer?.command?.[2]).toContain("cp -r /cron-src/. /home/node/.openclaw/cron/");
 
     const volumeMounts = initContainer?.volumeMounts?.map((mount) => mount.mountPath) ?? [];
     expect(volumeMounts).toContain("/agents-tree");
@@ -68,7 +66,7 @@ describe("k8s state sync manifests", () => {
     expect(skillsVolume?.configMap?.name).toBe("openclaw-skills");
     expect(skillsVolume?.configMap?.items).toEqual([{ key: "f0", path: "briefing-bot/SKILL.md" }]);
     expect(cronVolume?.configMap?.name).toBe("openclaw-cron");
-    expect(cronVolume?.configMap?.items).toEqual([{ key: "jobs.json", path: "jobs.json" }]);
+    expect(cronVolume?.configMap?.items).toEqual([{ key: "f0", path: "jobs.json" }]);
   });
 });
 

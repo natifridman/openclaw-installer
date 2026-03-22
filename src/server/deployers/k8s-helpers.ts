@@ -179,7 +179,7 @@ export function buildOpenClawConfig(config: DeployConfig, gatewayToken: string):
     skills: {
       load: { extraDirs: ["~/.openclaw/skills"], watch: true, watchDebounceMs: 1000 },
     },
-    cron: { enabled: !!config.cronEnabled },
+    cron: { enabled: !!config.cronJobsDir },
   };
 
   const sandboxToolPolicy = buildSandboxToolPolicy(config);

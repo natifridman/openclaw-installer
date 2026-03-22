@@ -59,8 +59,9 @@ export interface DeployConfig {
   otelExperimentId?: string;   // MLflow experiment ID (optional, for MLflow endpoints)
   otelImage?: string;
   otelJaeger?: boolean;        // Run Jaeger all-in-one as a sidecar (UI on port 16686)
+  // Cron jobs
+  cronJobsDir?: string; // directory with cron job definitions (enables cron when set)
   // Agent security
-  cronEnabled?: boolean; // default: false (opt-in)
   subagentPolicy?: "none" | "self" | "unrestricted"; // default: "none"
   // Telegram channel
   telegramEnabled?: boolean;
@@ -70,7 +71,7 @@ export interface DeployConfig {
   containerRuntime?: "podman" | "docker";
   image?: string;
   port?: number;
-  agentSourceDir?: string; // Host directory with workspace-*, skills/, and cron/jobs.json to provision
+  agentSourceDir?: string; // Host directory with workspace-* and skills/ to provision
   // Kubernetes mode
   namespace?: string;
   withA2a?: boolean;

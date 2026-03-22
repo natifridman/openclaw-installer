@@ -185,7 +185,7 @@ export function deploymentManifest(
   otelViaOperator = false,
   skillEntries: TreeEntry[] = [],
   agentTreeEntries: TreeEntry[] = [],
-  cronJobsContent?: string,
+  cronEntries: TreeEntry[] = [],
 ): k8s.V1Deployment {
   const image = defaultImage(config);
   const id = agentId(config);
@@ -264,7 +264,7 @@ mkdir -p /home/node/.openclaw/workspace-${id}
 ${copyLines}
 find /agents-tree -mindepth 1 -type d -name 'workspace-*' -exec sh -c 'base="$(basename "$1")"; if [ "$base" = "workspace-main" ]; then dest="/home/node/.openclaw/workspace-${id}"; else dest="/home/node/.openclaw/$base"; fi; mkdir -p "$dest"; cp -r "$1"/* "$dest"/ 2>/dev/null || true' _ {} \\;
 cp -r /skills-src/. /home/node/.openclaw/skills/ 2>/dev/null || true
-cp /cron-src/jobs.json /home/node/.openclaw/cron/jobs.json 2>/dev/null || true
+cp -r /cron-src/. /home/node/.openclaw/cron/ 2>/dev/null || true
 chown -R 1000:1000 /home/node/.openclaw 2>/dev/null || true
 echo "Config initialized"
 `.trim();
@@ -443,8 +443,8 @@ echo "Config initialized"
               name: "cron-config",
               configMap: {
                 name: "openclaw-cron",
-                ...(cronJobsContent !== undefined
-                  ? { items: [{ key: "jobs.json", path: "jobs.json" }] }
+                ...(cronEntries.length > 0
+                  ? { items: cronEntries.map((entry) => ({ key: entry.key, path: entry.path })) }
                   : {}),
               },
             },
