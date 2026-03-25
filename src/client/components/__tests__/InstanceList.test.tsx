@@ -66,13 +66,13 @@ afterEach(() => {
 describe("InstanceList", () => {
   it("shows loading state initially", () => {
     globalThis.fetch = vi.fn(() => new Promise(() => {})) as unknown as typeof globalThis.fetch;
-    render(<InstanceList />);
+    render(<InstanceList active />);
     expect(screen.getByText("Loading...")).toBeInTheDocument();
   });
 
   it("shows empty state when no instances", async () => {
     globalThis.fetch = mockFetchWith([]);
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByText("No OpenClaw instances found")).toBeInTheDocument();
     });
@@ -80,7 +80,7 @@ describe("InstanceList", () => {
 
   it("shows an error state when the instances request fails", async () => {
     globalThis.fetch = vi.fn(() => Promise.reject(new Error("network down"))) as unknown as typeof globalThis.fetch;
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByText("Could not load instances.")).toBeInTheDocument();
     });
@@ -89,7 +89,7 @@ describe("InstanceList", () => {
 
   it("renders running local instance with all expected controls", async () => {
     globalThis.fetch = mockFetchWith([runningInstance]);
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByText("abc123")).toBeInTheDocument();
     });
@@ -106,7 +106,7 @@ describe("InstanceList", () => {
 
   it("renders stopped instance with Start button and no panel buttons", async () => {
     globalThis.fetch = mockFetchWith([stoppedInstance]);
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByText("Start")).toBeInTheDocument();
     });
@@ -117,7 +117,7 @@ describe("InstanceList", () => {
 
   it("renders deploying K8s instance with badge, progress, and Re-deploy", async () => {
     globalThis.fetch = mockFetchWith([deployingK8sInstance]);
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByText("K8s")).toBeInTheDocument();
     });
@@ -127,7 +127,7 @@ describe("InstanceList", () => {
 
   it("renders error K8s instance with restart count and error message", async () => {
     globalThis.fetch = mockFetchWith([errorK8sInstance]);
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByText("CrashLoopBackOff")).toBeInTheDocument();
     });
@@ -138,7 +138,7 @@ describe("InstanceList", () => {
   it("enables Delete Data for running K8s instance", async () => {
     const runningK8s = { ...runningInstance, mode: "kubernetes", id: "k8s-1" };
     globalThis.fetch = mockFetchWith([runningK8s]);
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /delete data/i })).toBeInTheDocument();
     });
@@ -160,7 +160,7 @@ describe("InstanceList", () => {
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
     }) as unknown as typeof globalThis.fetch;
 
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /connection info/i })).toBeInTheDocument();
     });
@@ -181,7 +181,7 @@ describe("InstanceList", () => {
     const fetchMock = mockFetchWith([stoppedInstance]);
     globalThis.fetch = fetchMock;
 
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /start/i })).toBeInTheDocument();
     });
@@ -195,7 +195,7 @@ describe("InstanceList", () => {
     const fetchMock = mockFetchWith([runningInstance]);
     globalThis.fetch = fetchMock;
 
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /stop/i })).toBeInTheDocument();
     });
@@ -210,7 +210,7 @@ describe("InstanceList", () => {
     const fetchMock = mockFetchWith([runningK8s]);
     globalThis.fetch = fetchMock;
 
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /re-deploy/i })).toBeInTheDocument();
     });
@@ -237,7 +237,7 @@ describe("InstanceList", () => {
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
     }) as unknown as typeof globalThis.fetch;
 
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByText("http://localhost:18789")).toBeInTheDocument();
     });
@@ -277,7 +277,7 @@ describe("InstanceList", () => {
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
     }) as unknown as typeof globalThis.fetch;
 
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByText("https://sam-openclaw.apps.example.com")).toBeInTheDocument();
     });
@@ -298,7 +298,7 @@ describe("InstanceList", () => {
     const fetchMock = mockFetchWith([stoppedInstance]);
     globalThis.fetch = fetchMock;
 
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /delete data/i })).toBeInTheDocument();
     });
@@ -313,7 +313,7 @@ describe("InstanceList", () => {
     const fetchMock = mockFetchWith([stoppedInstance]);
     globalThis.fetch = fetchMock;
 
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /delete data/i })).toBeInTheDocument();
     });
@@ -322,9 +322,59 @@ describe("InstanceList", () => {
     expect(fetchMock).not.toHaveBeenCalledWith("/api/instances/inst-2", { method: "DELETE" });
   });
 
+  // Regression test for #5: stale status when switching tabs
+  it("fetches instances immediately when active prop transitions to true", async () => {
+    const fetchMock = mockFetchWith([stoppedInstance]);
+    globalThis.fetch = fetchMock;
+
+    const { rerender } = render(<InstanceList active={false} />);
+    await waitFor(() => {
+      // Initial mount fetch still fires
+      expect(fetchMock).toHaveBeenCalledWith("/api/instances");
+    });
+
+    const callCountBeforeActivation = fetchMock.mock.calls.filter(
+      (c: unknown[]) => c[0] === "/api/instances",
+    ).length;
+
+    // Simulate tab switch: active transitions from false to true
+    rerender(<InstanceList active />);
+
+    await waitFor(() => {
+      const callCountAfterActivation = fetchMock.mock.calls.filter(
+        (c: unknown[]) => c[0] === "/api/instances",
+      ).length;
+      expect(callCountAfterActivation).toBeGreaterThan(callCountBeforeActivation);
+    });
+  });
+
+  it("does not fetch again when active remains true (no duplicate fetches)", async () => {
+    const fetchMock = mockFetchWith([runningInstance]);
+    globalThis.fetch = fetchMock;
+
+    const { rerender } = render(<InstanceList active />);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/instances");
+    });
+
+    const callCountBefore = fetchMock.mock.calls.filter(
+      (c: unknown[]) => c[0] === "/api/instances",
+    ).length;
+
+    // Re-render with same active=true — should NOT trigger extra fetch
+    rerender(<InstanceList active />);
+
+    // Give it a tick to ensure no extra fetch fires
+    await new Promise((r) => setTimeout(r, 50));
+    const callCountAfter = fetchMock.mock.calls.filter(
+      (c: unknown[]) => c[0] === "/api/instances",
+    ).length;
+    expect(callCountAfter).toBe(callCountBefore);
+  });
+
   it("renders gracefully when fetch rejects", async () => {
     globalThis.fetch = vi.fn(() => Promise.reject(new Error("network error"))) as unknown as typeof globalThis.fetch;
-    render(<InstanceList />);
+    render(<InstanceList active />);
     // Should not crash — component catches the error and finishes loading
     await waitFor(() => {
       expect(screen.queryByText("Loading...")).not.toBeInTheDocument();
@@ -344,7 +394,7 @@ describe("InstanceList", () => {
     }) as unknown as typeof globalThis.fetch;
     globalThis.fetch = fetchMock;
 
-    render(<InstanceList />);
+    render(<InstanceList active />);
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /include k8s/i })).toBeInTheDocument();
     });

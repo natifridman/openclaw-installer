@@ -99,7 +99,7 @@ function K8sProgress({ inst }: { inst: Instance }) {
   );
 }
 
-export default function InstanceList() {
+export default function InstanceList({ active }: { active: boolean }) {
   const [instances, setInstances] = useState<Instance[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -150,6 +150,13 @@ export default function InstanceList() {
     const interval = setInterval(fetchInstances, 5000);
     return () => clearInterval(interval);
   }, [includeK8s]);
+
+  // Fix for #5: fetch immediately when the Instances tab becomes visible
+  useEffect(() => {
+    if (active) {
+      fetchInstances();
+    }
+  }, [active]);
 
   const k8sToggle = k8sAvailable ? (
     <button className="btn btn-ghost" onClick={() => setIncludeK8s((prev) => !prev)}>
