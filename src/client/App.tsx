@@ -51,7 +51,7 @@ export default function App() {
       </div>
 
       <div style={{ display: tab === "instances" ? "block" : "none" }}>
-        <InstanceList />
+        <InstanceList active={tab === "instances"} />
       </div>
 
       {SHOW_PLUGINS_TAB && (
