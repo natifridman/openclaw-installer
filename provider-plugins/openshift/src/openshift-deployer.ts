@@ -192,13 +192,9 @@ export class OpenShiftDeployer implements Deployer {
             // meaningfully dangerous in practice.
             parsed.gateway.controlUi.dangerouslyDisableDeviceAuth = true;
           }
-          if (parsed.gateway) {
-            const existingTrustedProxies = Array.isArray(parsed.gateway.trustedProxies)
-              ? parsed.gateway.trustedProxies.filter((value: unknown): value is string => typeof value === "string" && value.trim().length > 0)
-              : [];
-            parsed.gateway.trustedProxies = Array.from(new Set([...existingTrustedProxies, "127.0.0.1", "::1"]));
-          }
           // Bind to loopback since OAuth proxy fronts the gateway
+          // NOTE: we intentionally do NOT set gateway.trustedProxies here.
+          // See ADR 0002 for rationale.
           if (parsed.gateway) {
             parsed.gateway.bind = "loopback";
           }
