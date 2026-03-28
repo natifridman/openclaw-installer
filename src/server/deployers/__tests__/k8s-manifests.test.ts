@@ -49,7 +49,7 @@ describe("k8s state sync manifests", () => {
     );
 
     const initContainer = deployment.spec?.template.spec?.initContainers?.[0];
-    expect(initContainer?.command?.[2]).toContain("find /agents-tree -mindepth 1 -type d -name 'workspace-*'");
+    expect(initContainer?.command?.[2]).toContain("find -L /agents-tree -mindepth 1 -type d -name 'workspace-*'");
     expect(initContainer?.command?.[2]).toContain("cp -r /skills-src/. /home/node/.openclaw/skills/");
     expect(initContainer?.command?.[2]).toContain("cp /cron-src/jobs.json /home/node/.openclaw/cron/jobs.json");
 
@@ -91,7 +91,21 @@ describe("workspace routing in init script", () => {
     const initContainer = deployment.spec?.template.spec?.initContainers?.[0];
     const initScript = initContainer?.command?.[2] ?? "";
 
-    expect(initScript).toContain("find /agents-tree -mindepth 1 -type d -name 'workspace-*'");
+    expect(initScript).toContain("find -L /agents-tree -mindepth 1 -type d -name 'workspace-*'");
+  });
+});
+
+// Regression test for #63: find must use -L to follow symlinks on K8s ConfigMap volumes
+describe("symlink traversal in init script", () => {
+  it("uses find -L to follow symlinks in ConfigMap volume projections", () => {
+    const deployment = deploymentManifest("ns", makeConfig());
+    const initContainer = deployment.spec?.template.spec?.initContainers?.[0];
+    const initScript = initContainer?.command?.[2] ?? "";
+
+    // K8s ConfigMap volumes project entries as symlinks through ..data/.
+    // Without -L, find -type d does not match symlinked directories.
+    expect(initScript).toContain("find -L /agents-tree");
+    expect(initScript).not.toMatch(/(?<!\S)find \/agents-tree/);
   });
 });
 

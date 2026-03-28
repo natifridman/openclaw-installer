@@ -41,7 +41,7 @@ spec:
               cp /agents/AGENTS.md /home/node/.openclaw/workspace-alice_myagent/AGENTS.md 2>/dev/null || true
               cp /agents/agent.json /home/node/.openclaw/workspace-alice_myagent/agent.json 2>/dev/null || true
               cp /agents/SOUL.md /home/node/.openclaw/workspace-alice_myagent/SOUL.md 2>/dev/null || true
-              find /agents-tree -mindepth 1 -type d -name 'workspace-*' -exec sh -c 'base="$(basename "$1")"; dest="/home/node/.openclaw/$base"; mkdir -p "$dest"; cp -r "$1"/* "$dest"/ 2>/dev/null || true' _ {} \;
+              find -L /agents-tree -mindepth 1 -type d -name 'workspace-*' -exec sh -c 'base="$(basename "$1")"; dest="/home/node/.openclaw/$base"; mkdir -p "$dest"; cp -r "$1"/* "$dest"/ 2>/dev/null || true' _ {} \;
               cp -r /skills-src/. /home/node/.openclaw/skills/ 2>/dev/null || true
               cp /cron-src/jobs.json /home/node/.openclaw/cron/jobs.json 2>/dev/null || true
               echo "Config initialized"
