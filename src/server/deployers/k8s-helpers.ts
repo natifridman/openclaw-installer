@@ -1,7 +1,7 @@
 import process from "node:process";
 import { randomBytes } from "node:crypto";
 import type { DeployConfig, DeployModelOption, DeploySecretRef } from "./types.js";
-import { shouldUseLitellmProxy, litellmModelName, LITELLM_PORT } from "./litellm.js";
+import { shouldUseLitellmProxy, litellmModelName, litellmRegisteredModelNames, LITELLM_PORT } from "./litellm.js";
 import { shouldUseOtel, OTEL_HTTP_PORT } from "./otel.js";
 import { buildSandboxConfig } from "./sandbox.js";
 import { buildSandboxToolPolicy } from "./tool-policy.js";
@@ -445,15 +445,19 @@ export function buildOpenClawConfig(config: DeployConfig, gatewayToken: string):
         }))),
       ],
     },
+    // Fix for #78: register all LiteLLM models (primary + secondary providers)
+    // in the provider listing.  Exclude the primary model since it is already
+    // in agents.defaults.models via buildDefaultAgentModelCatalog, avoiding a
+    // duplicate entry in the UI dropdown.
     ...(shouldUseLitellmProxy(config) ? {
       models: {
         providers: {
           litellm: {
             baseUrl: `http://localhost:${LITELLM_PORT}/v1`,
             api: "openai-completions",
-            models: [
-              { id: litellmModelName(config), name: litellmModelName(config) },
-            ],
+            models: litellmRegisteredModelNames(config)
+              .filter((name) => name !== litellmModelName(config))
+              .map((name) => ({ id: name, name })),
           },
         },
       },

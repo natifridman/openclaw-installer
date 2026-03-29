@@ -240,9 +240,10 @@ export function deploymentManifest(
   const useOtelDirect = useOtel && !otelViaOperator;
 
   const optionalKeys = [
-    // Fix for #6: in proxy mode the gateway talks to LiteLLM, not directly
-    // to Anthropic/OpenAI, so don't leak API keys into the gateway env.
-    ...(!useProxy ? ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"] : []),
+    // Gateway always gets provider API keys so it can route to OpenAI/Anthropic
+    // natively. LiteLLM only handles Vertex models.
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
     "MODEL_ENDPOINT",
     "MODEL_ENDPOINT_API_KEY",
     "TELEGRAM_BOT_TOKEN",
@@ -436,7 +437,9 @@ echo "Config initialized"
                 capabilities: { drop: ["ALL"] },
               },
             },
-            // LiteLLM proxy sidecar: holds GCP creds, exposes OpenAI-compatible API
+            // LiteLLM proxy sidecar: holds GCP creds, exposes OpenAI-compatible API.
+            // Only handles Vertex models — secondary providers (OpenAI, Anthropic)
+            // are routed directly by the gateway using their native API keys.
             ...(useProxy ? [{
               name: "litellm",
               image: config.litellmImage || LITELLM_IMAGE,

@@ -40,13 +40,17 @@ export function litellmModelString(config: DeployConfig): string {
 
 /**
  * Build model entries for the LiteLLM config based on the Vertex provider.
+ * LiteLLM only handles Vertex models — secondary providers (OpenAI, Anthropic)
+ * are routed directly by the gateway using their native API keys.
  */
 function buildModelList(config: DeployConfig): Array<Record<string, unknown>> {
   const project = config.googleCloudProject || "";
   const location = config.googleCloudLocation || "";
 
+  const models: Array<Record<string, unknown>> = [];
+
   if (config.vertexProvider === "google") {
-    return [
+    models.push(
       {
         model_name: "gemini-2.5-pro",
         litellm_params: {
@@ -63,28 +67,30 @@ function buildModelList(config: DeployConfig): Array<Record<string, unknown>> {
           vertex_location: location,
         },
       },
-    ];
+    );
+  } else {
+    // Anthropic (Claude via Vertex)
+    models.push(
+      {
+        model_name: "claude-sonnet-4-6",
+        litellm_params: {
+          model: "vertex_ai/claude-sonnet-4-6",
+          vertex_project: project,
+          vertex_location: location,
+        },
+      },
+      {
+        model_name: "claude-haiku-4-5",
+        litellm_params: {
+          model: "vertex_ai/claude-haiku-4-5",
+          vertex_project: project,
+          vertex_location: location,
+        },
+      },
+    );
   }
 
-  // Anthropic (Claude via Vertex)
-  return [
-    {
-      model_name: "claude-sonnet-4-6",
-      litellm_params: {
-        model: "vertex_ai/claude-sonnet-4-6",
-        vertex_project: project,
-        vertex_location: location,
-      },
-    },
-    {
-      model_name: "claude-haiku-4-5",
-      litellm_params: {
-        model: "vertex_ai/claude-haiku-4-5",
-        vertex_project: project,
-        vertex_location: location,
-      },
-    },
-  ];
+  return models;
 }
 
 /**
@@ -117,8 +123,10 @@ export function generateLitellmConfig(config: DeployConfig, masterKey: string): 
     lines.push(`  - model_name: ${m.model_name}`);
     lines.push("    litellm_params:");
     lines.push(`      model: ${params.model}`);
-    lines.push(`      vertex_project: "${params.vertex_project}"`);
-    lines.push(`      vertex_location: "${params.vertex_location}"`);
+    if (params.vertex_project !== undefined) {
+      lines.push(`      vertex_project: "${params.vertex_project}"`);
+      lines.push(`      vertex_location: "${params.vertex_location}"`);
+    }
   }
 
   lines.push("");
@@ -126,4 +134,12 @@ export function generateLitellmConfig(config: DeployConfig, masterKey: string): 
   lines.push(`  master_key: "${masterKey}"`);
 
   return lines.join("\n") + "\n";
+}
+
+/**
+ * Returns all model names registered in LiteLLM (Vertex models only), so the
+ * OpenClaw config can list them in the litellm provider's models array.
+ */
+export function litellmRegisteredModelNames(config: DeployConfig): string[] {
+  return buildModelList(config).map((m) => String(m.model_name));
 }

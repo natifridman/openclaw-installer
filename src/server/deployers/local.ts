@@ -27,6 +27,7 @@ import {
   litellmModelName,
   generateLitellmMasterKey,
   generateLitellmConfig,
+  litellmRegisteredModelNames,
   LITELLM_IMAGE,
   LITELLM_PORT,
 } from "./litellm.js";
@@ -495,15 +496,19 @@ function buildOpenClawConfig(config: DeployConfig, gatewayToken: string): string
         }))),
       ],
     },
+    // Fix for #78: register all LiteLLM models (primary + secondary providers)
+    // in the provider listing.  Exclude the primary model since it is already
+    // in agents.defaults.models via buildDefaultAgentModelCatalog, avoiding a
+    // duplicate entry in the UI dropdown.
     ...(shouldUseLitellmProxy(config) ? {
       models: {
         providers: {
           litellm: {
             baseUrl: `http://localhost:${LITELLM_PORT}/v1`,
             api: "openai-completions",
-            models: [
-              { id: litellmModelName(config), name: litellmModelName(config) },
-            ],
+            models: litellmRegisteredModelNames(config)
+              .filter((name) => name !== litellmModelName(config))
+              .map((name) => ({ id: name, name })),
           },
         },
       },
@@ -753,18 +758,16 @@ function buildRunArgs(
     NODE_ENV: "production",
   };
 
-  // Fix for #6: in proxy mode the gateway talks to LiteLLM, not directly
-  // to Anthropic/OpenAI, so don't expose API keys to the gateway.
+  // Pass API keys to the gateway so it can route to OpenAI/Anthropic natively.
+  // LiteLLM only handles Vertex models — secondary providers go direct.
   if (
-    !useProxy
-    && effectiveConfig.anthropicApiKey
+    effectiveConfig.anthropicApiKey
     && (!effectiveConfig.anthropicApiKeyRef || usesDefaultEnvSecretRef(effectiveConfig.anthropicApiKeyRef))
   ) {
     env.ANTHROPIC_API_KEY = effectiveConfig.anthropicApiKey;
   }
   if (
-    !useProxy
-    && effectiveConfig.openaiApiKey
+    effectiveConfig.openaiApiKey
     && (!effectiveConfig.openaiApiKeyRef || usesDefaultEnvSecretRef(effectiveConfig.openaiApiKeyRef))
   ) {
     env.OPENAI_API_KEY = effectiveConfig.openaiApiKey;

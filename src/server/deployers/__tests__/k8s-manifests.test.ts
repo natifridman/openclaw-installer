@@ -109,9 +109,10 @@ describe("symlink traversal in init script", () => {
   });
 });
 
-// Regression tests for #6: API keys must not leak to the gateway in proxy mode
+// Gateway always gets provider API keys — LiteLLM only handles Vertex,
+// secondary providers (OpenAI, Anthropic) are routed directly by the gateway.
 describe("gateway env vars in proxy mode", () => {
-  it("excludes ANTHROPIC_API_KEY and OPENAI_API_KEY when litellm proxy is active", () => {
+  it("includes ANTHROPIC_API_KEY and OPENAI_API_KEY even when litellm proxy is active", () => {
     const proxyConfig = makeConfig({
       inferenceProvider: "vertex-anthropic",
       litellmProxy: true,
@@ -123,8 +124,8 @@ describe("gateway env vars in proxy mode", () => {
     const deployment = deploymentManifest("ns", proxyConfig);
     const envNames = gatewayEnvNames(deployment);
 
-    expect(envNames).not.toContain("ANTHROPIC_API_KEY");
-    expect(envNames).not.toContain("OPENAI_API_KEY");
+    expect(envNames).toContain("ANTHROPIC_API_KEY");
+    expect(envNames).toContain("OPENAI_API_KEY");
   });
 
   it("includes ANTHROPIC_API_KEY and OPENAI_API_KEY when proxy is not active", () => {
@@ -176,5 +177,49 @@ describe("gateway env vars in proxy mode", () => {
 
     expect(envNames).not.toContain("GOOGLE_CLOUD_PROJECT");
     expect(envNames).not.toContain("GOOGLE_CLOUD_LOCATION");
+  });
+});
+
+/** Extract env var names from the LiteLLM sidecar container in a deployment manifest. */
+function litellmEnvNames(deployment: k8s.V1Deployment): string[] {
+  const container = deployment.spec?.template.spec?.containers?.find((c) => c.name === "litellm");
+  return (container?.env ?? []).map((e) => e.name);
+}
+
+// LiteLLM sidecar only handles Vertex — no secondary provider keys needed
+describe("litellm sidecar env vars in proxy mode", () => {
+  it("does not inject secondary provider keys into litellm sidecar", () => {
+    const config = makeConfig({
+      inferenceProvider: "vertex-anthropic",
+      litellmProxy: true,
+      gcpServiceAccountJson: '{"project_id":"test"}',
+      openaiApiKey: "sk-oai-test",
+      anthropicApiKey: "sk-ant-test",
+    });
+
+    const deployment = deploymentManifest("ns", config);
+    const envNames = litellmEnvNames(deployment);
+
+    // LiteLLM only needs GCP creds for Vertex
+    expect(envNames).toContain("GOOGLE_APPLICATION_CREDENTIALS");
+    expect(envNames).not.toContain("OPENAI_API_KEY");
+    expect(envNames).not.toContain("ANTHROPIC_API_KEY");
+  });
+
+  it("gateway gets secondary keys even in proxy mode", () => {
+    const config = makeConfig({
+      inferenceProvider: "vertex-anthropic",
+      litellmProxy: true,
+      gcpServiceAccountJson: '{"project_id":"test"}',
+      openaiApiKey: "sk-oai-test",
+      anthropicApiKey: "sk-ant-test",
+    });
+
+    const deployment = deploymentManifest("ns", config);
+    const gwEnvNames = gatewayEnvNames(deployment);
+
+    // Gateway routes to OpenAI/Anthropic directly
+    expect(gwEnvNames).toContain("OPENAI_API_KEY");
+    expect(gwEnvNames).toContain("ANTHROPIC_API_KEY");
   });
 });
