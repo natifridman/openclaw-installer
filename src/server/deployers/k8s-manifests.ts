@@ -437,6 +437,8 @@ echo "Config initialized"
               },
             },
             // LiteLLM proxy sidecar: holds GCP creds, exposes OpenAI-compatible API
+            // Fix for #78: also inject secondary provider API keys so LiteLLM
+            // can route to all configured providers (OpenAI, direct Anthropic).
             ...(useProxy ? [{
               name: "litellm",
               image: config.litellmImage || LITELLM_IMAGE,
@@ -445,6 +447,12 @@ echo "Config initialized"
               env: [
                 ...(config.gcpServiceAccountJson
                   ? [{ name: "GOOGLE_APPLICATION_CREDENTIALS", value: "/home/node/gcp/sa.json" }]
+                  : []),
+                ...(config.openaiApiKey || config.openaiApiKeyRef
+                  ? [{ name: "OPENAI_API_KEY", valueFrom: { secretKeyRef: { name: "openclaw-secrets", key: "OPENAI_API_KEY", optional: true } } }]
+                  : []),
+                ...(config.anthropicApiKey || config.anthropicApiKeyRef
+                  ? [{ name: "ANTHROPIC_API_KEY", valueFrom: { secretKeyRef: { name: "openclaw-secrets", key: "ANTHROPIC_API_KEY", optional: true } } }]
                   : []),
               ],
               volumeMounts: [

@@ -178,3 +178,76 @@ describe("gateway env vars in proxy mode", () => {
     expect(envNames).not.toContain("GOOGLE_CLOUD_LOCATION");
   });
 });
+
+/** Extract env var names from the LiteLLM sidecar container in a deployment manifest. */
+function litellmEnvNames(deployment: k8s.V1Deployment): string[] {
+  const container = deployment.spec?.template.spec?.containers?.find((c) => c.name === "litellm");
+  return (container?.env ?? []).map((e) => e.name);
+}
+
+// Regression tests for #78: LiteLLM sidecar must receive secondary provider API keys
+describe("litellm sidecar env vars in proxy mode (#78)", () => {
+  it("injects OPENAI_API_KEY into litellm sidecar when configured", () => {
+    const config = makeConfig({
+      inferenceProvider: "vertex-anthropic",
+      litellmProxy: true,
+      gcpServiceAccountJson: '{"project_id":"test"}',
+      openaiApiKey: "sk-oai-test",
+    });
+
+    const deployment = deploymentManifest("ns", config);
+    const envNames = litellmEnvNames(deployment);
+
+    expect(envNames).toContain("OPENAI_API_KEY");
+  });
+
+  it("injects ANTHROPIC_API_KEY into litellm sidecar when configured", () => {
+    const config = makeConfig({
+      inferenceProvider: "vertex-google",
+      litellmProxy: true,
+      gcpServiceAccountJson: '{"project_id":"test"}',
+      vertexProvider: "google",
+      anthropicApiKey: "sk-ant-test",
+    });
+
+    const deployment = deploymentManifest("ns", config);
+    const envNames = litellmEnvNames(deployment);
+
+    expect(envNames).toContain("ANTHROPIC_API_KEY");
+  });
+
+  it("does not inject secondary keys when they are not configured", () => {
+    const config = makeConfig({
+      inferenceProvider: "vertex-anthropic",
+      litellmProxy: true,
+      gcpServiceAccountJson: '{"project_id":"test"}',
+    });
+
+    const deployment = deploymentManifest("ns", config);
+    const envNames = litellmEnvNames(deployment);
+
+    expect(envNames).not.toContain("OPENAI_API_KEY");
+    expect(envNames).not.toContain("ANTHROPIC_API_KEY");
+  });
+
+  it("still excludes secondary keys from the gateway container", () => {
+    const config = makeConfig({
+      inferenceProvider: "vertex-anthropic",
+      litellmProxy: true,
+      gcpServiceAccountJson: '{"project_id":"test"}',
+      openaiApiKey: "sk-oai-test",
+      anthropicApiKey: "sk-ant-test",
+    });
+
+    const deployment = deploymentManifest("ns", config);
+    const gwEnvNames = gatewayEnvNames(deployment);
+    const sidecarEnvNames = litellmEnvNames(deployment);
+
+    // Gateway should NOT have the keys (Fix for #6 still holds)
+    expect(gwEnvNames).not.toContain("OPENAI_API_KEY");
+    expect(gwEnvNames).not.toContain("ANTHROPIC_API_KEY");
+    // Sidecar SHOULD have the keys (Fix for #78)
+    expect(sidecarEnvNames).toContain("OPENAI_API_KEY");
+    expect(sidecarEnvNames).toContain("ANTHROPIC_API_KEY");
+  });
+});

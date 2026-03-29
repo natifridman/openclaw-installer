@@ -40,13 +40,17 @@ export function litellmModelString(config: DeployConfig): string {
 
 /**
  * Build model entries for the LiteLLM config based on the Vertex provider.
+ * Fix for #78: also includes secondary provider models when their API keys
+ * are configured, so LiteLLM can route to all configured providers.
  */
 function buildModelList(config: DeployConfig): Array<Record<string, unknown>> {
   const project = config.googleCloudProject || "";
   const location = config.googleCloudLocation || "";
 
+  const models: Array<Record<string, unknown>> = [];
+
   if (config.vertexProvider === "google") {
-    return [
+    models.push(
       {
         model_name: "gemini-2.5-pro",
         litellm_params: {
@@ -63,28 +67,51 @@ function buildModelList(config: DeployConfig): Array<Record<string, unknown>> {
           vertex_location: location,
         },
       },
-    ];
+    );
+  } else {
+    // Anthropic (Claude via Vertex)
+    models.push(
+      {
+        model_name: "claude-sonnet-4-6",
+        litellm_params: {
+          model: "vertex_ai/claude-sonnet-4-6",
+          vertex_project: project,
+          vertex_location: location,
+        },
+      },
+      {
+        model_name: "claude-haiku-4-5",
+        litellm_params: {
+          model: "vertex_ai/claude-haiku-4-5",
+          vertex_project: project,
+          vertex_location: location,
+        },
+      },
+    );
   }
 
-  // Anthropic (Claude via Vertex)
-  return [
-    {
-      model_name: "claude-sonnet-4-6",
-      litellm_params: {
-        model: "vertex_ai/claude-sonnet-4-6",
-        vertex_project: project,
-        vertex_location: location,
-      },
-    },
-    {
-      model_name: "claude-haiku-4-5",
-      litellm_params: {
-        model: "vertex_ai/claude-haiku-4-5",
-        vertex_project: project,
-        vertex_location: location,
-      },
-    },
-  ];
+  // Fix for #78: add secondary provider models when their API keys are configured.
+  // LiteLLM picks up OPENAI_API_KEY / ANTHROPIC_API_KEY from the environment.
+  if (config.openaiApiKey || config.openaiApiKeyRef) {
+    const openaiModel = config.openaiModel?.trim() || "gpt-5.4";
+    if (!models.some((m) => m.model_name === openaiModel)) {
+      models.push({
+        model_name: openaiModel,
+        litellm_params: { model: `openai/${openaiModel}` },
+      });
+    }
+  }
+  if (config.anthropicApiKey || config.anthropicApiKeyRef) {
+    const anthropicModel = config.anthropicModel?.trim() || "claude-sonnet-4-6";
+    if (!models.some((m) => m.model_name === anthropicModel)) {
+      models.push({
+        model_name: anthropicModel,
+        litellm_params: { model: `anthropic/${anthropicModel}` },
+      });
+    }
+  }
+
+  return models;
 }
 
 /**
@@ -117,8 +144,10 @@ export function generateLitellmConfig(config: DeployConfig, masterKey: string): 
     lines.push(`  - model_name: ${m.model_name}`);
     lines.push("    litellm_params:");
     lines.push(`      model: ${params.model}`);
-    lines.push(`      vertex_project: "${params.vertex_project}"`);
-    lines.push(`      vertex_location: "${params.vertex_location}"`);
+    if (params.vertex_project !== undefined) {
+      lines.push(`      vertex_project: "${params.vertex_project}"`);
+      lines.push(`      vertex_location: "${params.vertex_location}"`);
+    }
   }
 
   lines.push("");
@@ -126,4 +155,28 @@ export function generateLitellmConfig(config: DeployConfig, masterKey: string): 
   lines.push(`  master_key: "${masterKey}"`);
 
   return lines.join("\n") + "\n";
+}
+
+/**
+ * Fix for #78: returns env vars that the LiteLLM sidecar needs for
+ * secondary providers (OpenAI, direct Anthropic).  The sidecar picks
+ * these up automatically when routing requests to non-Vertex providers.
+ */
+export function litellmSidecarEnvVars(config: DeployConfig): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (config.openaiApiKey) {
+    env.OPENAI_API_KEY = config.openaiApiKey;
+  }
+  if (config.anthropicApiKey) {
+    env.ANTHROPIC_API_KEY = config.anthropicApiKey;
+  }
+  return env;
+}
+
+/**
+ * Fix for #78: returns all model names registered in LiteLLM, so the
+ * OpenClaw config can list them in the provider's models array.
+ */
+export function litellmRegisteredModelNames(config: DeployConfig): string[] {
+  return buildModelList(config).map((m) => String(m.model_name));
 }

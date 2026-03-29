@@ -27,6 +27,8 @@ import {
   litellmModelName,
   generateLitellmMasterKey,
   generateLitellmConfig,
+  litellmSidecarEnvVars,
+  litellmRegisteredModelNames,
   LITELLM_IMAGE,
   LITELLM_PORT,
 } from "./litellm.js";
@@ -495,15 +497,19 @@ function buildOpenClawConfig(config: DeployConfig, gatewayToken: string): string
         }))),
       ],
     },
+    // Fix for #78: register all LiteLLM models (primary + secondary providers)
+    // in the provider listing.  Exclude the primary model since it is already
+    // in agents.defaults.models via buildDefaultAgentModelCatalog, avoiding a
+    // duplicate entry in the UI dropdown.
     ...(shouldUseLitellmProxy(config) ? {
       models: {
         providers: {
           litellm: {
             baseUrl: `http://localhost:${LITELLM_PORT}/v1`,
             api: "openai-completions",
-            models: [
-              { id: litellmModelName(config), name: litellmModelName(config) },
-            ],
+            models: litellmRegisteredModelNames(config)
+              .filter((name) => name !== litellmModelName(config))
+              .map((name) => ({ id: name, name })),
           },
         },
       },
@@ -1140,13 +1146,22 @@ Use this table to track verified peer OpenClaw instances.
           throw new Error("Failed to create pod for sidecars");
         }
 
+        // Fix for #78: build env args for the LiteLLM sidecar, including
+        // secondary provider API keys so it can route to all configured providers.
+        const sidecarEnvArgs: string[] = [
+          "-e", `GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA_CONTAINER_PATH}`,
+        ];
+        for (const [key, val] of Object.entries(litellmSidecarEnvVars(config))) {
+          sidecarEnvArgs.push("-e", `${key}=${val}`);
+        }
+
         // Start LiteLLM in the pod
         const litellmRunResult = await runCommand(runtime, [
           "run", "-d",
           "--name", litellmName,
           "--pod", pod,
           ...localStateMountArgs(config),
-          "-e", `GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA_CONTAINER_PATH}`,
+          ...sidecarEnvArgs,
           litellmImage,
           "--config", LITELLM_CONFIG_PATH, "--port", String(LITELLM_PORT),
         ], log);
@@ -1154,6 +1169,15 @@ Use this table to track verified peer OpenClaw instances.
           throw new Error("Failed to start LiteLLM sidecar");
         }
       } else {
+        // Fix for #78: build env args for the LiteLLM sidecar, including
+        // secondary provider API keys so it can route to all configured providers.
+        const sidecarEnvArgs: string[] = [
+          "-e", `GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA_CONTAINER_PATH}`,
+        ];
+        for (const [key, val] of Object.entries(litellmSidecarEnvVars(config))) {
+          sidecarEnvArgs.push("-e", `${key}=${val}`);
+        }
+
         // Docker: start LiteLLM container, gateway will use --network=container:
         await removeContainer(runtime as ContainerRuntime, litellmName);
         const litellmRunResult = await runCommand(runtime, [
@@ -1162,7 +1186,7 @@ Use this table to track verified peer OpenClaw instances.
           "-p", `${port}:18789`,
           "-p", `${port + 1}:${LITELLM_PORT}`,
           ...localStateMountArgs(config),
-          "-e", `GOOGLE_APPLICATION_CREDENTIALS=${GCP_SA_CONTAINER_PATH}`,
+          ...sidecarEnvArgs,
           litellmImage,
           "--config", LITELLM_CONFIG_PATH, "--port", String(LITELLM_PORT),
         ], log);

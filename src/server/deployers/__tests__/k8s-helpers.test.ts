@@ -446,6 +446,46 @@ describe("model config generation", () => {
   });
 });
 
+// Regression tests for #78: LiteLLM model catalog should include secondary providers
+// and not duplicate the primary model
+describe("litellm model catalog in proxy mode (#78)", () => {
+  it("lists secondary OpenAI model in models.providers.litellm when openaiApiKey is set", () => {
+    const config = makeConfig({
+      inferenceProvider: "vertex-anthropic",
+      litellmProxy: true,
+      gcpServiceAccountJson: '{"project_id":"test"}',
+      openaiApiKey: "sk-oai-test",
+    });
+
+    const rendered = buildOpenClawConfig(config, "gateway-token") as {
+      models?: { providers?: { litellm?: { models?: Array<{ id: string; name: string }> } } };
+    };
+
+    const litellmModels = rendered.models?.providers?.litellm?.models ?? [];
+    const modelIds = litellmModels.map((m) => m.id);
+    expect(modelIds).toContain("gpt-5.4");
+  });
+
+  it("does not duplicate the primary model in models.providers.litellm", () => {
+    const config = makeConfig({
+      inferenceProvider: "vertex-anthropic",
+      litellmProxy: true,
+      gcpServiceAccountJson: '{"project_id":"test"}',
+      openaiApiKey: "sk-oai-test",
+    });
+
+    const rendered = buildOpenClawConfig(config, "gateway-token") as {
+      models?: { providers?: { litellm?: { models?: Array<{ id: string; name: string }> } } };
+    };
+
+    const litellmModels = rendered.models?.providers?.litellm?.models ?? [];
+    const modelIds = litellmModels.map((m) => m.id);
+    // Primary model (claude-sonnet-4-6) should NOT be in the provider listing
+    // because it is already in agents.defaults.models via buildDefaultAgentModelCatalog
+    expect(modelIds).not.toContain("claude-sonnet-4-6");
+  });
+});
+
 // Regression tests for #7: agent names with underscores must produce valid namespaces
 describe("sanitizeForRfc1123", () => {
   it("replaces underscores with hyphens", () => {
