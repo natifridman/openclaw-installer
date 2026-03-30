@@ -1,55 +1,90 @@
-# Using The OpenClaw CLI With Local Installer Instances
+# Using OpenClaw Commands With Local Installer Instances
 
-When you deploy locally with `openclaw-installer`, the upstream OpenClaw CLI can target the running container directly via `OPENCLAW_CONTAINER`.
+For installer-managed local instances, the most reliable workflow is to run the upstream `openclaw` CLI inside the running container with `podman exec` or `docker exec`.
 
-For example:
+Use the host-installed CLI only if you already have it available locally.
+
+## Recommended Workflow
+
+If you are using podman:
 
 ```bash
-export OPENCLAW_CONTAINER=openclaw-somalley-lobster
-openclaw health
-openclaw status --deep
-openclaw sandbox explain
+podman exec -it openclaw-myuser-myagent openclaw health
+podman exec -it openclaw-myuser-myagent openclaw status --deep
+podman exec -it openclaw-myuser-myagent openclaw sandbox explain
 ```
 
-The installer also saves per-instance metadata under:
+If you are using docker:
+
+```bash
+docker exec -it openclaw-myuser-myagent openclaw health
+docker exec -it openclaw-myuser-myagent openclaw status --deep
+docker exec -it openclaw-myuser-myagent openclaw sandbox explain
+```
+
+This is also the workflow to approve first-connect browser device pairing for the Control UI:
+
+```bash
+podman exec -it openclaw-myuser-myagent openclaw devices list
+podman exec -it openclaw-myuser-myagent openclaw devices approve <requestId>
+```
+
+Or with docker:
+
+```bash
+docker exec -it openclaw-myuser-myagent openclaw devices list
+docker exec -it openclaw-myuser-myagent openclaw devices approve <requestId>
+```
+
+## Optional Host CLI Workflow
+
+If you already have the upstream OpenClaw CLI installed on the host, the installer also saves per-instance metadata under:
 
 ```text
 ~/.openclaw/installer/local/openclaw-<prefix>-<name>/.env
 ```
 
-## Recommended Workflow
+You can target the running local instance either way:
 
-If you already know the container name, just export `OPENCLAW_CONTAINER` and run normal upstream OpenClaw CLI commands:
+1. export `OPENCLAW_CONTAINER` directly if you already know the container name
+2. source the saved per-instance `.env`, which sets `OPENCLAW_CONTAINER` for you
+
+Examples:
 
 ```bash
-export OPENCLAW_CONTAINER=openclaw-somalley-lobster
+export OPENCLAW_CONTAINER=openclaw-myuser-myagent
 openclaw health
 openclaw status --deep
-openclaw sandbox explain
 ```
-
-If you prefer, you can source the saved `.env` instead:
 
 ```bash
-source ~/.openclaw/installer/local/openclaw-somalley-lobster/.env
-openclaw health
+source ~/.openclaw/installer/local/openclaw-myuser-myagent/.env
+openclaw devices list
+openclaw devices approve <requestId>
 ```
 
-Because `OPENCLAW_CONTAINER` is set either way, the CLI will target the running local containerized instance directly.
+Because `OPENCLAW_CONTAINER` is set either way, the host CLI will target the running local containerized instance directly.
 
 ## Switching Between Local Instances
 
-Set `OPENCLAW_CONTAINER` to the instance you want:
+Use the container name shown in the **Instances** tab.
+
+For container-exec workflows:
 
 ```bash
-export OPENCLAW_CONTAINER=openclaw-somalley-lobster
-openclaw health
-
-export OPENCLAW_CONTAINER=openclaw-somalley-shubra
-openclaw status --deep
+podman exec -it openclaw-myuser-myagent openclaw health
+podman exec -it openclaw-myuser-otheragent openclaw status --deep
 ```
 
-Or source the matching saved `.env` if that is more convenient for your workflow.
+For host CLI workflows:
+
+```bash
+export OPENCLAW_CONTAINER=openclaw-myuser-myagent
+openclaw health
+
+export OPENCLAW_CONTAINER=openclaw-myuser-otheragent
+openclaw status --deep
+```
 
 ## Notes
 
