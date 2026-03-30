@@ -348,6 +348,55 @@ router.post("/:id/redeploy", async (req, res) => {
   }
 });
 
+// Approve the latest pending device pairing request for a running local instance.
+router.post("/:id/approve-device", async (req, res) => {
+  const instance = await findInstance(req.params.id);
+  if (!instance) {
+    res.status(404).json({ error: "Instance not found" });
+    return;
+  }
+
+  if (instance.mode !== "local") {
+    res.status(400).json({ error: "Device approval is currently only supported for local instances" });
+    return;
+  }
+
+  const runtime = await detectRuntime();
+  if (!runtime) {
+    res.status(500).json({ error: "No container runtime" });
+    return;
+  }
+
+  const containers = await discoverContainers(runtime);
+  const c = containers.find((container) => container.name === req.params.id);
+  if (!c || c.status !== "running") {
+    res.status(400).json({ error: "Instance must be running to approve pairing" });
+    return;
+  }
+
+  try {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+    const { stdout, stderr } = await execFileAsync(runtime, [
+      "exec",
+      req.params.id,
+      "openclaw",
+      "devices",
+      "approve",
+      "--latest",
+    ]);
+
+    res.json({
+      status: "approved",
+      output: [stdout, stderr].filter(Boolean).join("").trim(),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
+});
+
 // Get gateway token from running container or K8s secret
 router.get("/:id/token", async (req, res) => {
   // Check if this is a K8s instance

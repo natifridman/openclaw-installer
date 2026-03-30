@@ -96,6 +96,7 @@ describe("InstanceList", () => {
     expect(screen.getByText("running")).toBeInTheDocument();
     expect(screen.getByText("http://localhost:18789")).toBeInTheDocument();
     // Running instances show panel and lifecycle buttons
+    expect(screen.getByText("Approve Pairing")).toBeInTheDocument();
     expect(screen.getByText("Connection Info")).toBeInTheDocument();
     expect(screen.getByText("Command")).toBeInTheDocument();
     expect(screen.getByText("Logs")).toBeInTheDocument();
@@ -143,6 +144,7 @@ describe("InstanceList", () => {
       expect(screen.getByRole("button", { name: /delete data/i })).toBeInTheDocument();
     });
     expect(screen.getByRole("button", { name: /delete data/i })).not.toBeDisabled();
+    expect(screen.queryByRole("button", { name: /approve pairing/i })).not.toBeInTheDocument();
   });
 
   it("toggles connection info panel on button click", async () => {
@@ -217,6 +219,20 @@ describe("InstanceList", () => {
 
     await user.click(screen.getByRole("button", { name: /re-deploy/i }));
     expect(fetchMock).toHaveBeenCalledWith("/api/instances/k8s-1/redeploy", { method: "POST" });
+  });
+
+  it("calls approve-device endpoint when Approve Pairing is clicked", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const fetchMock = mockFetchWith([runningInstance]);
+    globalThis.fetch = fetchMock;
+
+    render(<InstanceList active />);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /approve pairing/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /approve pairing/i }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/instances/inst-1/approve-device", { method: "POST" });
   });
 
   it("opens URL with token via handleOpenWithToken", async () => {

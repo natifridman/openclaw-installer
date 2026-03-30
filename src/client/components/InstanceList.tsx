@@ -177,6 +177,13 @@ export default function InstanceList({ active }: { active: boolean }) {
     setActing(null);
   };
 
+  const handleApproveDevice = async (id: string) => {
+    setActing(id);
+    await fetch(`/api/instances/${id}/approve-device`, { method: "POST" });
+    await fetchInstances();
+    setActing(null);
+  };
+
   const handleDeleteData = async (id: string, mode?: string) => {
     if (
       !confirm(
@@ -335,6 +342,16 @@ export default function InstanceList({ active }: { active: boolean }) {
               <div className="instance-actions">
                 {isRunning && (
                   <>
+                    {!isK8s && (
+                      <button
+                        className="btn btn-ghost"
+                        disabled={isActing}
+                        onClick={() => handleApproveDevice(inst.id)}
+                        title="Approve the latest pending browser device pairing request"
+                      >
+                        Approve Pairing
+                      </button>
+                    )}
                     <button
                       className="btn btn-ghost"
                       onClick={() => togglePanel(inst.id, "connection")}
