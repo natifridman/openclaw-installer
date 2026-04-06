@@ -6,6 +6,7 @@ import { shouldUseOtel, OTEL_HTTP_PORT } from "./otel.js";
 import { buildSandboxConfig } from "./sandbox.js";
 import { buildSandboxToolPolicy } from "./tool-policy.js";
 import { loadAgentSourceBundle, loadAgentSourceMcpServers } from "./agent-source.js";
+import { normalizeManagedVaultProviders } from "./vault-helper.js";
 
 export const DEFAULT_IMAGE = process.env.OPENCLAW_IMAGE || "ghcr.io/openclaw/openclaw:latest";
 export const DEFAULT_VERTEX_IMAGE = process.env.OPENCLAW_VERTEX_IMAGE || DEFAULT_IMAGE;
@@ -53,6 +54,13 @@ export function generateToken(): string {
 
 export function usesDefaultEnvSecretRef(ref?: DeploySecretRef): ref is DeploySecretRef {
   return Boolean(ref?.source === "env" && ref.provider.trim() === "default" && ref.id.trim());
+}
+
+export function resolveEnvSecretRefId(ref: DeploySecretRef | undefined, fallbackId: string): string | undefined {
+  if (!ref) {
+    return fallbackId;
+  }
+  return usesDefaultEnvSecretRef(ref) ? ref.id.trim() : undefined;
 }
 
 export function normalizeModelRef(config: DeployConfig, modelRef: string): string {
@@ -222,20 +230,39 @@ export function deriveModel(config: DeployConfig): string {
 export function resolveSubagentModel(
   entryModel: { primary?: string; fallbacks?: string[] } | undefined,
   deployModel: string,
+  config?: DeployConfig,
 ): { primary: string; fallbacks?: string[] } {
   if (!entryModel?.primary) {
-    return { primary: deployModel };
+    const fallbacks = [...(entryModel?.fallbacks || [])]
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0 && entry !== deployModel);
+    return fallbacks.length > 0
+      ? { primary: deployModel, fallbacks }
+      : { primary: deployModel };
   }
 
-  const fallbacks = [...(entryModel.fallbacks || [])];
+  const primary = entryModel.primary.trim();
+  const normalizedFallbacks = [...(entryModel.fallbacks || [])]
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 
-  if (entryModel.primary !== deployModel && !fallbacks.includes(deployModel)) {
+  if (config && detectUnavailableProvider(primary, config)) {
+    const fallbacks = [primary, ...normalizedFallbacks]
+      .filter((entry, index, all) => entry !== deployModel && all.indexOf(entry) === index);
+    return fallbacks.length > 0
+      ? { primary: deployModel, fallbacks }
+      : { primary: deployModel };
+  }
+
+  const fallbacks = [...normalizedFallbacks];
+
+  if (primary !== deployModel && !fallbacks.includes(deployModel)) {
     fallbacks.push(deployModel);
   }
 
   return fallbacks.length > 0
-    ? { primary: entryModel.primary, fallbacks }
-    : { primary: entryModel.primary };
+    ? { primary, fallbacks }
+    : { primary };
 }
 
 /**
@@ -289,17 +316,7 @@ function hasSecretRef(ref?: DeploySecretRef): ref is DeploySecretRef {
 }
 
 function parseSecretProvidersJson(raw?: string): Record<string, unknown> | undefined {
-  const trimmed = raw?.trim();
-  if (!trimmed) return undefined;
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // Validation happens in the route; config generation just ignores invalid input.
-  }
-  return undefined;
+  return normalizeManagedVaultProviders(raw);
 }
 
 function shouldAutoEnvRef(config: DeployConfig, explicitRef: DeploySecretRef | undefined, value: string | undefined): boolean {
@@ -314,6 +331,53 @@ function envSecretRef(id: string): DeploySecretRef {
   };
 }
 
+export function resolveEffectiveAnthropicApiKeyRef(config: DeployConfig): DeploySecretRef | undefined {
+  return hasSecretRef(config.anthropicApiKeyRef)
+    ? config.anthropicApiKeyRef
+    : shouldAutoEnvRef(config, config.anthropicApiKeyRef, config.anthropicApiKey)
+      ? envSecretRef("ANTHROPIC_API_KEY")
+      : undefined;
+}
+
+export function resolveEffectiveOpenAiApiKeyRef(config: DeployConfig): DeploySecretRef | undefined {
+  return hasSecretRef(config.openaiApiKeyRef)
+    ? config.openaiApiKeyRef
+    : shouldAutoEnvRef(config, config.openaiApiKeyRef, config.openaiApiKey)
+      ? envSecretRef("OPENAI_API_KEY")
+      : undefined;
+}
+
+export function buildManagedAgentAuthProfiles(config: DeployConfig): {
+  version: 1;
+  profiles: Record<string, Record<string, unknown>>;
+} | undefined {
+  const profiles: Record<string, Record<string, unknown>> = {};
+  const anthropicRef = resolveEffectiveAnthropicApiKeyRef(config);
+  const openaiRef = resolveEffectiveOpenAiApiKeyRef(config);
+
+  if (anthropicRef) {
+    profiles["anthropic:default"] = {
+      type: "api_key",
+      provider: "anthropic",
+      keyRef: cloneSecretRef(anthropicRef),
+    };
+  }
+  if (openaiRef) {
+    profiles["openai:default"] = {
+      type: "api_key",
+      provider: "openai",
+      keyRef: cloneSecretRef(openaiRef),
+    };
+  }
+
+  return Object.keys(profiles).length > 0
+    ? {
+        version: 1,
+        profiles,
+      }
+    : undefined;
+}
+
 function attachSecretHandlingConfig(ocConfig: Record<string, unknown>, config: DeployConfig): void {
   const providers = parseSecretProvidersJson(config.secretsProvidersJson) || {};
   let shouldDefineDefaultEnvProvider = false;
@@ -321,11 +385,7 @@ function attachSecretHandlingConfig(ocConfig: Record<string, unknown>, config: D
   const models = (ocConfig.models as Record<string, unknown> | undefined) || {};
   const providersMap = (models.providers as Record<string, unknown> | undefined) || {};
 
-  const openaiApiKeyRef = hasSecretRef(config.openaiApiKeyRef)
-    ? config.openaiApiKeyRef
-    : shouldAutoEnvRef(config, config.openaiApiKeyRef, config.openaiApiKey)
-      ? envSecretRef("OPENAI_API_KEY")
-      : undefined;
+  const openaiApiKeyRef = resolveEffectiveOpenAiApiKeyRef(config);
   const modelEndpointApiKeyRef = config.modelEndpointApiKey ? envSecretRef("MODEL_ENDPOINT_API_KEY") : undefined;
   if (openaiApiKeyRef) {
     if (openaiApiKeyRef.source === "env" && openaiApiKeyRef.provider === "default") {
@@ -459,7 +519,9 @@ export function buildOpenClawConfig(config: DeployConfig, gatewayToken: string):
           name: config.agentDisplayName || config.agentName,
           identity: { name: config.agentDisplayName || config.agentName },
           workspace: `~/.openclaw/workspace-${id}`,
-          model: buildAgentModelConfig(config, model),
+          model: sourceBundle?.mainAgent?.model
+            ? resolveSubagentModel(sourceBundle.mainAgent.model, model, config)
+            : buildAgentModelConfig(config, model),
           subagents: sourceBundle?.mainAgent?.subagents || subagentConfig(config.subagentPolicy),
           ...(sourceBundle?.mainAgent?.tools ? { tools: sourceBundle.mainAgent.tools } : {}),
         },
@@ -469,7 +531,7 @@ export function buildOpenClawConfig(config: DeployConfig, gatewayToken: string):
           name: entry.name || entry.id,
           ...(entry.name ? { identity: { name: entry.name } } : {}),
           workspace: `~/.openclaw/workspace-${entry.id}`,
-          model: resolveSubagentModel(entry.model, model),
+          model: resolveSubagentModel(entry.model, model, config),
           ...(entry.subagents ? { subagents: entry.subagents } : {}),
           ...(entry.tools ? { tools: entry.tools } : {}),
         }))),

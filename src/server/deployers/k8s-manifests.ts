@@ -4,6 +4,8 @@ import {
   agentId,
   tryParseProjectId,
   buildOpenClawConfig,
+  buildManagedAgentAuthProfiles,
+  resolveEnvSecretRefId,
   usesDefaultEnvSecretRef,
 } from "./k8s-helpers.js";
 import type { DeployConfig } from "./types.js";
@@ -11,6 +13,10 @@ import { shouldUseLitellmProxy, LITELLM_IMAGE, LITELLM_PORT } from "./litellm.js
 import { shouldUseOtel, OTEL_COLLECTOR_IMAGE, OTEL_GRPC_PORT, OTEL_HTTP_PORT, otelAgentEnv } from "./otel.js";
 import type { TreeEntry } from "../state-tree.js";
 import { loadAgentSourceBundle, mainWorkspaceShellCondition } from "./agent-source.js";
+import {
+  buildManagedVaultHelperScript,
+  OPENCLAW_SERVICE_ACCOUNT_NAME,
+} from "./vault-helper.js";
 
 export function namespaceManifest(ns: string): k8s.V1Namespace {
   return {
@@ -32,6 +38,18 @@ export function pvcManifest(ns: string): k8s.V1PersistentVolumeClaim {
     spec: {
       accessModes: ["ReadWriteOnce"],
       resources: { requests: { storage: "10Gi" } },
+    },
+  };
+}
+
+export function serviceAccountManifest(ns: string): k8s.V1ServiceAccount {
+  return {
+    apiVersion: "v1",
+    kind: "ServiceAccount",
+    metadata: {
+      name: OPENCLAW_SERVICE_ACCOUNT_NAME,
+      namespace: ns,
+      labels: { app: "openclaw" },
     },
   };
 }
@@ -133,16 +151,19 @@ export function secretManifest(ns: string, config: DeployConfig, gatewayToken: s
   const data: Record<string, string> = {
     OPENCLAW_GATEWAY_TOKEN: gatewayToken,
   };
-  if (config.anthropicApiKey && (!config.anthropicApiKeyRef || usesDefaultEnvSecretRef(config.anthropicApiKeyRef))) {
-    data.ANTHROPIC_API_KEY = config.anthropicApiKey;
+  const anthropicEnvRefId = resolveEnvSecretRefId(config.anthropicApiKeyRef, "ANTHROPIC_API_KEY");
+  if (config.anthropicApiKey && anthropicEnvRefId) {
+    data[anthropicEnvRefId] = config.anthropicApiKey;
   }
-  if (config.openaiApiKey && (!config.openaiApiKeyRef || usesDefaultEnvSecretRef(config.openaiApiKeyRef))) {
-    data.OPENAI_API_KEY = config.openaiApiKey;
+  const openaiEnvRefId = resolveEnvSecretRefId(config.openaiApiKeyRef, "OPENAI_API_KEY");
+  if (config.openaiApiKey && openaiEnvRefId) {
+    data[openaiEnvRefId] = config.openaiApiKey;
   }
   if (config.modelEndpoint) data.MODEL_ENDPOINT = config.modelEndpoint;
   if (config.modelEndpointApiKey) data.MODEL_ENDPOINT_API_KEY = config.modelEndpointApiKey;
-  if (config.telegramBotToken && (!config.telegramBotTokenRef || usesDefaultEnvSecretRef(config.telegramBotTokenRef))) {
-    data.TELEGRAM_BOT_TOKEN = config.telegramBotToken;
+  const telegramEnvRefId = resolveEnvSecretRefId(config.telegramBotTokenRef, "TELEGRAM_BOT_TOKEN");
+  if (config.telegramBotToken && telegramEnvRefId) {
+    data[telegramEnvRefId] = config.telegramBotToken;
   }
 
   // Resolve project ID from config or from the SA JSON
@@ -209,6 +230,62 @@ export function serviceManifest(ns: string, config: DeployConfig): k8s.V1Service
       ],
     },
   };
+}
+
+export function buildInitScript(config: DeployConfig): string {
+  const id = agentId(config);
+  const bundle = loadAgentSourceBundle(config);
+  const agentFiles = ["AGENTS.md", "agent.json", "SOUL.md", "IDENTITY.md", "TOOLS.md", "USER.md", "HEARTBEAT.md", "MEMORY.md"];
+  const copyLines = agentFiles
+    .map((f) => `  cp /agents/${f} /home/node/.openclaw/workspace-${id}/${f} 2>/dev/null || true`)
+    .join("\n");
+
+  const mainWorkspaceDest = `/home/node/.openclaw/workspace-${id}`;
+  const workspaceRouting = mainWorkspaceShellCondition(mainWorkspaceDest, bundle);
+  const vaultHelperScript = buildManagedVaultHelperScript();
+  const authProfiles = buildManagedAgentAuthProfiles(config);
+  const authManagedAgentIds = Array.from(new Set([id, ...((bundle?.agents || []).map((entry) => entry.id).filter(Boolean))]));
+  const authProfileLines = authProfiles
+    ? authManagedAgentIds
+      .map((agentId) => [
+        `mkdir -p /home/node/.openclaw/agents/${agentId}/agent`,
+        `cat > /home/node/.openclaw/agents/${agentId}/agent/auth-profiles.json <<'EOF_AUTH_PROFILES'`,
+        JSON.stringify(authProfiles, null, 2),
+        "EOF_AUTH_PROFILES",
+        `chmod 600 /home/node/.openclaw/agents/${agentId}/agent/auth-profiles.json`,
+      ].join("\n"))
+      .join("\n")
+    : "";
+
+  return `
+cp /config/openclaw.json /home/node/.openclaw/openclaw.json
+chmod 644 /home/node/.openclaw/openclaw.json
+mkdir -p /home/node/.openclaw/bin
+mkdir -p /home/node/.openclaw/workspace
+mkdir -p /home/node/.openclaw/skills
+mkdir -p /home/node/.openclaw/cron
+mkdir -p /home/node/.openclaw/workspace-${id}
+cat > /home/node/.openclaw/bin/openclaw-vault <<'EOF_VAULT_HELPER'
+${vaultHelperScript}
+EOF_VAULT_HELPER
+chmod 0755 /home/node/.openclaw/bin/openclaw-vault
+${copyLines}
+for dir in /agents-tree/workspace-*; do
+  [ -d "$dir" ] || continue
+  base="$(basename "$dir")"
+  ${workspaceRouting}
+  mkdir -p "$dest"
+  cp -r "$dir"/. "$dest"/ 2>/dev/null || true
+done
+cp -r /skills-src/. /home/node/.openclaw/skills/ 2>/dev/null || true
+cp /cron-src/jobs.json /home/node/.openclaw/cron/jobs.json 2>/dev/null || true
+cp /exec-approvals-src/exec-approvals.json /home/node/.openclaw/exec-approvals.json 2>/dev/null || true
+${authProfileLines}
+chown -R 1000:0 /home/node/.openclaw 2>/dev/null || true
+chmod -R g=u /home/node/.openclaw 2>/dev/null || true
+chmod 0755 /home/node/.openclaw/bin/openclaw-vault 2>/dev/null || true
+echo "Config initialized"
+`.trim();
 }
 
 export function deploymentManifest(
@@ -285,30 +362,7 @@ export function deploymentManifest(
     }
   }
 
-  const agentFiles = ["AGENTS.md", "agent.json", "SOUL.md", "IDENTITY.md", "TOOLS.md", "USER.md", "HEARTBEAT.md", "MEMORY.md"];
-  const copyLines = agentFiles
-    .map((f) => `  cp /agents/${f} /home/node/.openclaw/workspace-${id}/${f} 2>/dev/null || true`)
-    .join("\n");
-
-  // Fix for #62: use bundle-aware routing so persona-named workspaces map to the main agent
-  const mainWorkspaceDest = `/home/node/.openclaw/workspace-${id}`;
-  const workspaceRouting = mainWorkspaceShellCondition(mainWorkspaceDest, loadAgentSourceBundle(config));
-
-  const initScript = `
-cp /config/openclaw.json /home/node/.openclaw/openclaw.json
-chmod 644 /home/node/.openclaw/openclaw.json
-mkdir -p /home/node/.openclaw/workspace
-mkdir -p /home/node/.openclaw/skills
-mkdir -p /home/node/.openclaw/cron
-mkdir -p /home/node/.openclaw/workspace-${id}
-${copyLines}
-find -L /agents-tree -mindepth 1 -type d -name 'workspace-*' -exec sh -c 'base="$(basename "$1")"; ${workspaceRouting}; mkdir -p "$dest"; cp -r "$1"/* "$dest"/ 2>/dev/null || true' _ {} \\;
-cp -r /skills-src/. /home/node/.openclaw/skills/ 2>/dev/null || true
-cp /cron-src/jobs.json /home/node/.openclaw/cron/jobs.json 2>/dev/null || true
-cp /exec-approvals-src/exec-approvals.json /home/node/.openclaw/exec-approvals.json 2>/dev/null || true
-chown -R 1000:1000 /home/node/.openclaw 2>/dev/null || true
-echo "Config initialized"
-`.trim();
+  const initScript = buildInitScript(config);
 
   return {
     apiVersion: "apps/v1",
@@ -362,7 +416,7 @@ echo "Config initialized"
           },
         },
         spec: {
-          ...(withA2a ? { serviceAccountName: "openclaw-oauth-proxy" } : {}),
+          serviceAccountName: withA2a ? "openclaw-oauth-proxy" : OPENCLAW_SERVICE_ACCOUNT_NAME,
           initContainers: [
             {
               name: "init-config",
