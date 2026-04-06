@@ -546,13 +546,13 @@ export class KubernetesDeployer implements Deployer {
           if (ready) {
             return { ...result, status: "running", url, statusDetail, pods };
           }
-          return { ...result, status: "deploying", statusDetail: "Gateway starting...", pods };
+          return { ...result, status: "deploying", statusDetail: "Gateway starting...", url: undefined, pods };
         } catch {
           return { ...result, status: "running", statusDetail, pods };
         }
       }
 
-      return { ...result, status, statusDetail, pods };
+      return { ...result, status, statusDetail, url: undefined, pods };
     } catch {
       return { ...result, status: "unknown" };
     }

@@ -133,6 +133,22 @@ describe("KubernetesDeployer.status", () => {
     expect(result.url).toBeUndefined();
   });
 
+  it("clears stale URL when gateway is not responding", async () => {
+    mockDeployment(1, 1);
+    mockPods([{ phase: "Running", ready: true, state: { running: {} } }]);
+    vi.mocked(ensureK8sPortForward).mockResolvedValue({
+      localPort: 40123,
+      url: "http://localhost:40123",
+    });
+    mockGatewayError();
+
+    const deployer = new KubernetesDeployer();
+    const result = await deployer.status({ ...baseResult, url: "http://localhost:40123" });
+
+    expect(result.status).toBe("deploying");
+    expect(result.url).toBeUndefined();
+  });
+
   it("returns deploying when pods are ready but gateway returns 500", async () => {
     mockDeployment(1, 1);
     mockPods([{ phase: "Running", ready: true, state: { running: {} } }]);
