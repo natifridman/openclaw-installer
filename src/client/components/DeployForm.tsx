@@ -20,7 +20,8 @@ import {
 } from "./deploy-form/serialization.js";
 import { ProviderSection } from "./deploy-form/ProviderSection.js";
 import { SandboxSection } from "./deploy-form/SandboxSection.js";
-import { SecretProvidersSection } from "./deploy-form/SecretProvidersSection.js";
+import { SecretRefsSection } from "./deploy-form/SecretRefsSection.js";
+import { ExternalSecretProvidersSection } from "./deploy-form/ExternalSecretProvidersSection.js";
 import type {
   DeployFormConfig,
   DeployerInfo,
@@ -663,6 +664,22 @@ export default function DeployForm({ onDeployStarted }: DeployFormProps) {
     () => parsePodmanSecretMappingsText(config.podmanSecretMappingsText),
     [config.podmanSecretMappingsText],
   );
+  const inferredAnthropicApiKeyRef = !anthropicApiKeyRef
+    ? (
+      podmanSecretMappingsParse.mappings.some((mapping) => mapping.targetEnv === "ANTHROPIC_API_KEY")
+        || Boolean(config.anthropicApiKey.trim())
+    )
+      ? { source: "env", provider: "default", id: "ANTHROPIC_API_KEY" as const }
+      : undefined
+    : undefined;
+  const inferredOpenaiApiKeyRef = !openaiApiKeyRef
+    ? (
+      podmanSecretMappingsParse.mappings.some((mapping) => mapping.targetEnv === "OPENAI_API_KEY")
+        || Boolean(config.openaiApiKey.trim())
+    )
+      ? { source: "env", provider: "default", id: "OPENAI_API_KEY" as const }
+      : undefined
+    : undefined;
   const agentNameError = validateAgentName(config.agentName);
   const validationErrors: string[] = [];
   if (!config.agentName.trim()) {
@@ -1266,8 +1283,18 @@ export default function DeployForm({ onDeployStarted }: DeployFormProps) {
           setConfig={setConfig}
         />
 
-        <SecretProvidersSection
+        <SecretRefsSection
           config={config}
+          update={update}
+          mode={mode}
+          effectiveAnthropicApiKeyRef={anthropicApiKeyRef || inferredAnthropicApiKeyRef}
+          effectiveOpenaiApiKeyRef={openaiApiKeyRef || inferredOpenaiApiKeyRef}
+          anthropicApiKeyRefIsInferred={!anthropicApiKeyRef && Boolean(inferredAnthropicApiKeyRef)}
+          openaiApiKeyRefIsInferred={!openaiApiKeyRef && Boolean(inferredOpenaiApiKeyRef)}
+        />
+
+        <ExternalSecretProvidersSection
+          secretsProvidersJson={config.secretsProvidersJson}
           update={update}
         />
 

@@ -1,35 +1,64 @@
 import React from "react";
-import type { DeployFormConfig } from "./types.js";
+import type { DeployFormConfig, SecretRefValue } from "./types.js";
 
-interface SecretProvidersSectionProps {
+interface SecretRefsSectionProps {
   config: DeployFormConfig;
   update: (field: string, value: string) => void;
+  mode: string;
+  effectiveAnthropicApiKeyRef?: SecretRefValue;
+  effectiveOpenaiApiKeyRef?: SecretRefValue;
+  anthropicApiKeyRefIsInferred?: boolean;
+  openaiApiKeyRefIsInferred?: boolean;
 }
 
-export function SecretProvidersSection({ config, update }: SecretProvidersSectionProps) {
+function formatSecretRef(ref?: SecretRefValue): string {
+  return ref ? `${ref.source}/${ref.provider}/${ref.id}` : "None";
+}
+
+export function SecretRefsSection({
+  config,
+  update,
+  mode,
+  effectiveAnthropicApiKeyRef,
+  effectiveOpenaiApiKeyRef,
+  anthropicApiKeyRefIsInferred = false,
+  openaiApiKeyRefIsInferred = false,
+}: SecretRefsSectionProps) {
+  const isLocal = mode === "local";
+  const isCluster = mode === "kubernetes" || mode === "openshift";
+
+  const anthropicHint = anthropicApiKeyRefIsInferred
+    ? isLocal
+      ? "Currently inferred from local Podman secret mappings or the local API key field."
+      : isCluster
+        ? "Currently inferred from the installer-managed openclaw-secrets Secret."
+        : "Currently inferred from the deploy form."
+    : "Optional override. Leave blank to use the installer-managed SecretRef automatically.";
+
+  const openaiHint = openaiApiKeyRefIsInferred
+    ? isLocal
+      ? "Currently inferred from local Podman secret mappings or the local API key field."
+      : isCluster
+        ? "Currently inferred from the installer-managed openclaw-secrets Secret."
+        : "Currently inferred from the deploy form."
+    : "Optional override. Leave blank to use the installer-managed SecretRef automatically.";
+
   return (
     <details style={{ marginTop: "1.5rem" }}>
-      <summary style={{ cursor: "pointer", fontWeight: 600 }}>Advanced: Experimental External Secret Providers</summary>
+      <summary style={{ cursor: "pointer", fontWeight: 600 }}>Advanced: SecretRefs</summary>
       <div className="card" style={{ marginTop: "0.75rem" }}>
         <div className="hint" style={{ marginBottom: "0.75rem" }}>
-          Only use this if your secrets come from an external provider such as Vault, a mounted file,
-          or a custom command. Most users should leave this closed and just enter credentials in the normal fields above.
-        </div>
-        <div className="form-group">
-          <label>Secret Providers JSON (optional)</label>
-          <textarea
-            rows={6}
-            placeholder={`{\n  "default": { "source": "env" },\n  "vault_openai": {\n    "source": "exec",\n    "command": "/usr/local/bin/vault",\n    "args": ["kv", "get", "-field=OPENAI_API_KEY", "secret/openclaw"],\n    "passEnv": ["VAULT_ADDR", "VAULT_TOKEN"]\n  }\n}`}
-            value={config.secretsProvidersJson}
-            onChange={(e) => update("secretsProvidersJson", e.target.value)}
-          />
-          <div className="hint">
-            Optional <code>secrets.providers</code> object. Runtime prerequisites still need to exist
-            inside the OpenClaw environment.
-          </div>
+          These control how generated OpenClaw config references provider credentials. The installer can infer the
+          built-in Anthropic and OpenAI SecretRefs automatically from your local Podman secret mappings or the managed
+          Kubernetes <code>openclaw-secrets</code> Secret. Override them here only when you need a different source,
+          provider, or id.
         </div>
 
         <div className="card" style={{ marginBottom: "1rem" }}>
+          <div className="hint" style={{ marginBottom: "0.75rem" }}>
+            Effective Anthropic SecretRef: <code>{formatSecretRef(effectiveAnthropicApiKeyRef)}</code>
+            {anthropicApiKeyRefIsInferred ? " (inferred)" : ""}
+          </div>
           <div className="form-row">
             <div className="form-group">
               <label>Anthropic SecretRef Source</label>
@@ -60,13 +89,15 @@ export function SecretProvidersSection({ config, update }: SecretProvidersSectio
               value={config.anthropicApiKeyRefId}
               onChange={(e) => update("anthropicApiKeyRefId", e.target.value)}
             />
-            <div className="hint">
-              Optional override. Leave blank to use the installer-managed env-backed SecretRef automatically.
-            </div>
+            <div className="hint">{anthropicHint}</div>
           </div>
         </div>
 
         <div className="card" style={{ marginBottom: "1rem" }}>
+          <div className="hint" style={{ marginBottom: "0.75rem" }}>
+            Effective OpenAI SecretRef: <code>{formatSecretRef(effectiveOpenaiApiKeyRef)}</code>
+            {openaiApiKeyRefIsInferred ? " (inferred)" : ""}
+          </div>
           <div className="form-row">
             <div className="form-group">
               <label>OpenAI SecretRef Source</label>
@@ -97,10 +128,13 @@ export function SecretProvidersSection({ config, update }: SecretProvidersSectio
               value={config.openaiApiKeyRefId}
               onChange={(e) => update("openaiApiKeyRefId", e.target.value)}
             />
-            <div className="hint">
-              Optional override. Leave blank to use the installer-managed env-backed SecretRef automatically.
-            </div>
+            <div className="hint">{openaiHint}</div>
           </div>
+        </div>
+
+        <div className="hint">
+          The installer currently auto-manages SecretRefs for the built-in model provider credentials. Arbitrary new
+          SecretRefs are not exposed here yet unless there is a deploy form field that consumes them.
         </div>
       </div>
     </details>
