@@ -51,148 +51,65 @@ Useful variants:
 | **OpenShift** | [deploy-openshift.md](provider-plugins/openshift/docs/deploy-openshift.md) | Extends Kubernetes with OAuth proxy sidecar, Route, and ServiceAccount. |
 | **Local (podman / docker)** | [deploy-local.md](docs/deploy-local.md) | Pulls the image, provisions your agent, starts a container on localhost. Works on macOS and Linux. |
 
-## Plugin Ecosystem
+## Installer Provider Plugins
 
-The openclaw-installer supports a plugin system for adding deployment targets. **These are installer deployer plugins, not OpenClaw runtime plugins.** They extend the installer with platform-specific deployment capabilities.
+These are installer provider plugins, not OpenClaw runtime plugins.
 
-### Overview
+They extend the installer with additional deployment targets such as OpenShift or other platform-specific deployers. This is not a ClawHub-style plugin marketplace, and the installer does not install arbitrary upstream OpenClaw plugins for you.
 
-The plugin system enables:
+This repo supports two plugin paths:
 
-- **New deployment platforms** without modifying core installer code
-- **Auto-detection** of available platforms (e.g., OpenShift Routes API)
-- **Platform-specific features** like OAuth proxies, Routes, or cloud-specific networking
-- **Vendor independence** — core installer remains platform-neutral
+1. **In-repo installer provider plugins** in `provider-plugins/`
+2. **External plugins** installed as npm packages and listed in `~/.openclaw/installer/plugins.json`
 
-**Documentation:**
+In-repo installer provider plugins are loaded automatically at startup -- no extra install steps needed.
 
-- **[Plugin Architecture](docs/plugin-architecture.md)** — System design, registry, and lifecycle
-- **[Plugin Development Guide](docs/plugin-development.md)** — How to create your own deployer plugin
-- **[ADR 0001: Deployer Plugin System](adr/0001-deployer-plugin-system.md)** — Design decision record
+| Plugin | Directory | Description |
+|--------|-----------|-------------|
+| **OpenShift** | [`provider-plugins/openshift/`](provider-plugins/openshift/) | OAuth proxy, Routes, and ServiceAccounts for OpenShift clusters. Auto-detected when logged into an OpenShift cluster (`oc login`). |
 
-### Available Plugins
+To deploy on OpenShift, just log in with `oc login` before starting the installer. The OpenShift option will appear automatically in the deploy form.
 
-| Plugin | Type | Description |
-|--------|------|-------------|
-| **Local** | Built-in | Deploys to local Podman or Docker containers |
-| **Kubernetes** | Built-in | Deploys to any Kubernetes cluster via kubeconfig |
-| **OpenShift** | Provider Plugin | Extends Kubernetes with OAuth proxy, Routes, and ServiceAccounts. Auto-detected when logged into an OpenShift cluster. |
+### In-repo installer provider plugins
 
-### Plugin Types
+Anything under `provider-plugins/<name>/src/index.ts` is discovered by the server at startup. That is how the OpenShift plugin is activated in this repo.
 
-#### 1. Built-In Deployers
+This is the preferred model for provider-specific deployers that ship with the main repository.
 
-Core deployment modes included with the installer:
+### External installer provider plugins
 
-- `local` — Container deployment (Podman/Docker)
-- `kubernetes` — Generic Kubernetes deployment
+Third-party installer provider plugins can also be installed as npm packages. The loader discovers:
 
-#### 2. In-Repo Provider Plugins
+- unscoped packages named `openclaw-installer-*`
+- scoped packages whose package name starts with `openclaw-installer-`
 
-First-party plugins in `provider-plugins/` that ship with the installer:
+Examples:
 
-```
-provider-plugins/
-  openshift/
-    src/index.ts         # Plugin entry point
-    src/openshift-deployer.ts
-    templates/           # Platform-specific manifests
-    docs/
-    adr/
-```
+- `openclaw-installer-aws`
+- `@acme/openclaw-installer-gke`
 
-**Benefits:**
-- Loaded automatically at startup
-- Share CI/CD with core installer
-- Atomic updates with core changes
-- No separate npm package needed
-
-**Example:** The OpenShift plugin (`provider-plugins/openshift/`) extends the Kubernetes deployer with OpenShift-specific features.
-
-#### 3. External NPM Plugins
-
-Third-party plugins distributed as npm packages. Package naming convention:
-
-- `openclaw-installer-<name>` (e.g., `openclaw-installer-aws`)
-- `@scope/openclaw-installer-<name>` (e.g., `@acme/openclaw-installer-gke`)
-
-**Install via `run.sh`:**
+You can activate external installer provider plugins by writing `~/.openclaw/installer/plugins.json` directly, or by using `run.sh`:
 
 ```bash
 ./run.sh --plugin @acme/openclaw-installer-aws
 ./run.sh --plugins @acme/openclaw-installer-aws,@acme/openclaw-installer-gke
+OPENCLAW_INSTALLER_PLUGINS=@acme/openclaw-installer-aws ./run.sh
 ```
 
-**Or install manually:**
+`run.sh` writes the requested package list to `~/.openclaw/installer/plugins.json`, which is then consumed by the server plugin loader on startup.
 
-```bash
-npm install openclaw-installer-aws
-```
+These packages must implement the installer plugin `register()` contract and register deployers with the installer. Pointing this at a random OpenClaw plugin or ClawHub package will not work unless that package was specifically built as an installer provider plugin for `openclaw-installer`.
 
-Add to `~/.openclaw/installer/plugins.json`:
+### Recommended provider strategy
 
-```json
-{
-  "plugins": [
-    "openclaw-installer-aws",
-    "@acme/openclaw-installer-gke"
-  ]
-}
-```
+For this repo, the clean split is:
 
-### Creating a Plugin
+- ship first-party installer provider plugins under `provider-plugins/`
+- use external npm packages for optional or third-party installer provider plugins
 
-Plugins implement the `InstallerPlugin` interface and register deployers:
+That keeps the installer startup generic. Users start the same installer, and the available deployers come from the loaded plugins.
 
-```typescript
-import type { InstallerPlugin } from "@openclaw/installer/deployers/registry";
-import type { Deployer } from "@openclaw/installer/deployers/types";
-
-class MyDeployer implements Deployer {
-  async deploy(config, log) { /* ... */ }
-  async start(result, log) { /* ... */ }
-  async status(result) { /* ... */ }
-  async stop(result, log) { /* ... */ }
-  async teardown(result, log) { /* ... */ }
-}
-
-const plugin: InstallerPlugin = {
-  register(registry) {
-    registry.register({
-      mode: "my-platform",
-      title: "My Platform",
-      description: "Deploy to My Platform",
-      deployer: new MyDeployer(),
-      detect: async () => { /* check if platform is available */ },
-      priority: 10
-    });
-  }
-};
-
-export default plugin;
-```
-
-See the **[Plugin Development Guide](docs/plugin-development.md)** for detailed instructions.
-
-### Platform Detection
-
-Plugins can implement auto-detection to appear in the UI when their platform is available:
-
-- **OpenShift** — Detects `route.openshift.io` API group in the cluster
-- **Kubernetes** — Always available if kubeconfig is present
-- **Local** — Detects Podman or Docker on the system
-
-The UI automatically selects the highest-priority detected deployer.
-
-### Plugin Strategy
-
-**For this repo:**
-
-- **Built-in** — Core deployment modes (local, kubernetes)
-- **Provider plugins** — First-party platform integrations in `provider-plugins/`
-- **NPM packages** — Third-party or optional platform plugins
-
-This keeps the installer generic while allowing platform-specific features to be added modularly.
+See [ADR 0001](adr/0001-deployer-plugin-system.md) for the plugin system design.
 
 ## Model Providers
 
@@ -333,25 +250,6 @@ npm run build    # Compiles server + installer provider plugins (catches type er
 npm test         # Runs all vitest tests
 npm run lint     # ESLint checks
 ```
-
-**Test Coverage:**
-
-The project uses Vitest with v8 coverage provider to track test coverage progress toward the Q2 60% target.
-
-```bash
-npm run coverage              # Run tests with coverage report
-npm run coverage:watch        # Watch mode with coverage
-npm run coverage:report       # Generate and open HTML report
-```
-
-**Current baseline:** ~46% coverage (lines: 46.57%, statements: 45.81%, functions: 44.32%, branches: 48.31%)
-
-Coverage reports are generated in the `coverage/` directory:
-- **Text summary:** Displayed in the terminal after running tests
-- **HTML report:** Browse detailed coverage at `coverage/index.html`
-- **JSON summary:** Programmatic access via `coverage/coverage-summary.json`
-
-The configuration sets a 30% threshold baseline. Coverage data helps identify untested areas and track progress toward comprehensive test coverage.
 
 **Documentation:**
 - [AGENTS.md](AGENTS.md) - Development guide and conventions

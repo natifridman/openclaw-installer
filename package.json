@@ -36,10 +36,7 @@
     "start": "node dist/server/index.js",
     "preview": "vite build && node dist/server/index.js",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "coverage": "vitest run --coverage",
-    "coverage:watch": "vitest watch --coverage",
-    "coverage:report": "vitest run --coverage && open coverage/index.html || xdg-open coverage/index.html"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@kubernetes/client-node": "^1.4.0",
@@ -61,7 +58,6 @@
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.5.12",
     "@vitejs/plugin-react": "^4.3.0",
-    "@vitest/coverage-v8": "^4.1.4",
     "concurrently": "^9.0.0",
     "eslint": "^10.0.3",
     "globals": "^17.4.0",
