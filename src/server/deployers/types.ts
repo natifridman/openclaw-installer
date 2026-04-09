@@ -1,4 +1,5 @@
 import type { PodmanSecretMapping } from "../../shared/podman-secrets.js";
+import type { ResourceProfileSize, CustomResourceOverrides } from "./k8s-resource-profiles.js";
 
 export type DeployMode = string;
 export type BuiltinDeployMode = "local" | "kubernetes" | "ssh" | "fleet";
@@ -123,6 +124,9 @@ export interface DeployConfig {
   withA2a?: boolean;
   a2aRealm?: string;
   a2aKeycloakNamespace?: string;
+  // Kubernetes resources
+  resourceProfile?: ResourceProfileSize;
+  customResourceOverrides?: CustomResourceOverrides;
   // SSH mode
   sshHost?: string;
   sshUser?: string;

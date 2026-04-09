@@ -50,10 +50,70 @@ import {
 import { shouldUseLitellmProxy, generateLitellmMasterKey, generateLitellmConfig } from "./litellm.js";
 import { shouldUseOtel, generateOtelConfig, generateOtelConfigObject } from "./otel.js";
 import { OPENCLAW_SERVICE_ACCOUNT_NAME } from "./vault-helper.js";
+import { getResourceProfile, applyCustomOverrides, calculateTotalResources } from "./k8s-resource-profiles.js";
 
 // Re-export discovery for consumers
 export type { K8sPodInfo, K8sInstance } from "./k8s-discovery.js";
 export { discoverK8sInstances } from "./k8s-discovery.js";
+
+// ── Helper: check resource quota awareness ────────────────────────
+
+async function checkResourceQuota(
+  core: k8s.CoreV1Api,
+  ns: string,
+  config: DeployConfig,
+  log: LogCallback,
+): Promise<void> {
+  try {
+    const quotas = await core.listNamespacedResourceQuota({ namespace: ns });
+    if (!quotas.items || quotas.items.length === 0) {
+      return;
+    }
+
+    const resourceProfile = config.customResourceOverrides
+      ? applyCustomOverrides(getResourceProfile(config.resourceProfile || "medium"), config.customResourceOverrides)
+      : getResourceProfile(config.resourceProfile || "medium");
+
+    const totals = calculateTotalResources(resourceProfile, {
+      useLitellm: shouldUseLitellmProxy(config),
+      useOtel: shouldUseOtel(config),
+      useA2a: Boolean(config.withA2a),
+    });
+
+    log(`Resource profile: ${resourceProfile.size} (${resourceProfile.description})`);
+    log(`Total requests: ${totals.totalMemoryRequests} memory, ${totals.totalCpuRequests} CPU`);
+    log(`Total limits: ${totals.totalMemoryLimits} memory, ${totals.totalCpuLimits} CPU`);
+
+    for (const quota of quotas.items) {
+      if (!quota.status?.hard) continue;
+
+      const hard = quota.status.hard;
+      const used = quota.status.used || {};
+
+      const checkLimit = (resourceKey: string, requested: string, resourceName: string) => {
+        if (!hard[resourceKey]) return;
+
+        const hardValue = hard[resourceKey];
+        const usedValue = used[resourceKey] || "0";
+
+        log(`Quota ${quota.metadata?.name}: ${resourceKey} hard=${hardValue}, used=${usedValue}`);
+        log(`  Deploying with ${resourceName}=${requested} - verify quota capacity`);
+      };
+
+      checkLimit("requests.memory", totals.totalMemoryRequests, "memory requests");
+      checkLimit("requests.cpu", totals.totalCpuRequests, "CPU requests");
+      checkLimit("limits.memory", totals.totalMemoryLimits, "memory limits");
+      checkLimit("limits.cpu", totals.totalCpuLimits, "CPU limits");
+    }
+  } catch (e) {
+    const status = k8sApiHttpCode(e);
+    if (status === 403) {
+      log("Cannot check ResourceQuota (forbidden) — proceeding without quota validation");
+      return;
+    }
+    // Quotas not found or other error — non-fatal, continue deployment
+  }
+}
 
 // ── Helper: apply or update a resource ─────────────────────────────
 
@@ -140,6 +200,10 @@ export class KubernetesDeployer implements Deployer {
 
     // 1. Namespace
     await applyNamespace(core, ns, log);
+
+    // Check resource quota awareness
+    await checkResourceQuota(core, ns, config, log);
+
     if (config.withA2a) {
       log(`Labeling namespace ${ns} for Kagenti injection...`);
       await core.patchNamespace(
@@ -333,6 +397,9 @@ export class KubernetesDeployer implements Deployer {
         // has the sidecar.opentelemetry.io/inject annotation.
         otelViaOperator = true;
         log("OpenTelemetry Operator detected — using operator-managed sidecar");
+        const resourceProfile = config.customResourceOverrides
+          ? applyCustomOverrides(getResourceProfile(config.resourceProfile || "medium"), config.customResourceOverrides)
+          : getResourceProfile(config.resourceProfile || "medium");
         const otelCr = {
           apiVersion: "opentelemetry.io/v1beta1",
           kind: "OpenTelemetryCollector",
@@ -340,7 +407,7 @@ export class KubernetesDeployer implements Deployer {
           spec: {
             mode: "sidecar",
             config: generateOtelConfigObject(config),
-            resources: {
+            resources: resourceProfile.otelCollector || {
               requests: { memory: "128Mi", cpu: "100m" },
               limits: { memory: "256Mi", cpu: "200m" },
             },

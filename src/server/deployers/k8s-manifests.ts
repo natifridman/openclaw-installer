@@ -9,6 +9,11 @@ import {
   usesDefaultEnvSecretRef,
 } from "./k8s-helpers.js";
 import type { DeployConfig } from "./types.js";
+import {
+  getResourceProfile,
+  applyCustomOverrides,
+  type ResourceProfile,
+} from "./k8s-resource-profiles.js";
 import { shouldUseLitellmProxy, LITELLM_IMAGE, LITELLM_PORT } from "./litellm.js";
 import { shouldUseOtel, OTEL_COLLECTOR_IMAGE, OTEL_GRPC_PORT, OTEL_HTTP_PORT, otelAgentEnv } from "./otel.js";
 import type { TreeEntry } from "../state-tree.js";
@@ -240,6 +245,20 @@ export function serviceManifest(ns: string, config: DeployConfig): k8s.V1Service
   };
 }
 
+/**
+ * Resolve the effective resource profile from config
+ */
+function resolveResourceProfile(config: DeployConfig): ResourceProfile {
+  const profileSize = config.resourceProfile || "medium";
+  const baseProfile = getResourceProfile(profileSize);
+
+  if (config.customResourceOverrides && profileSize === "custom") {
+    return applyCustomOverrides(baseProfile, config.customResourceOverrides);
+  }
+
+  return baseProfile;
+}
+
 export function buildInitScript(config: DeployConfig): string {
   const id = agentId(config);
   const bundle = loadAgentSourceBundle(config);
@@ -307,6 +326,7 @@ export function deploymentManifest(
 ): k8s.V1Deployment {
   const image = defaultImage(config);
   const id = agentId(config);
+  const resourceProfile = resolveResourceProfile(config);
 
   const envVars: k8s.V1EnvVar[] = [
     { name: "HOME", value: "/home/node" },
@@ -432,10 +452,7 @@ export function deploymentManifest(
               image: "registry.access.redhat.com/ubi9-minimal:latest",
               imagePullPolicy: "IfNotPresent",
               command: ["sh", "-c", initScript],
-              resources: {
-                requests: { memory: "64Mi", cpu: "50m" },
-                limits: { memory: "128Mi", cpu: "200m" },
-              },
+              resources: resourceProfile.initContainer,
               volumeMounts: [
                 { name: "openclaw-home", mountPath: "/home/node/.openclaw" },
                 { name: "config-template", mountPath: "/config" },
@@ -461,10 +478,7 @@ export function deploymentManifest(
                 ...(withA2a ? [{ name: "bridge", containerPort: 18790, protocol: "TCP" as const }] : []),
               ],
               env: envVars,
-              resources: {
-                requests: { memory: "1Gi", cpu: "250m" },
-                limits: { memory: "4Gi", cpu: "1000m" },
-              },
+              resources: resourceProfile.gateway,
               livenessProbe: {
                 exec: {
                   command: [
@@ -523,7 +537,7 @@ export function deploymentManifest(
                   ? [{ name: "gcp-sa", mountPath: "/home/node/gcp", readOnly: true }]
                   : []),
               ],
-              resources: {
+              resources: resourceProfile.litellm || {
                 requests: { memory: "512Mi", cpu: "100m" },
                 limits: { memory: "1Gi", cpu: "500m" },
               },
@@ -551,7 +565,7 @@ export function deploymentManifest(
               volumeMounts: [
                 { name: "otel-config", mountPath: "/etc/otel", readOnly: true },
               ],
-              resources: {
+              resources: resourceProfile.otelCollector || {
                 requests: { memory: "128Mi", cpu: "100m" },
                 limits: { memory: "256Mi", cpu: "200m" },
               },
@@ -578,7 +592,7 @@ export function deploymentManifest(
                 { name: "agent-card-data", mountPath: "/srv/.well-known", readOnly: true },
                 { name: "a2a-bridge-script", mountPath: "/scripts", readOnly: true },
               ],
-              resources: {
+              resources: resourceProfile.agentCard || {
                 requests: { memory: "32Mi", cpu: "10m" },
                 limits: { memory: "64Mi", cpu: "50m" },
               },
