@@ -54,6 +54,7 @@ import { buildSandboxConfig } from "./sandbox.js";
 import { buildSandboxToolPolicy } from "./tool-policy.js";
 import { loadAgentSourceBundle, loadAgentSourceMcpServers, mainWorkspaceShellCondition } from "./agent-source.js";
 import { buildPodmanSecretRunArgs, hasPodmanSecretTarget } from "../../shared/podman-secrets.js";
+import { saveDeploymentHistory } from "./deployment-history.js";
 
 const DEFAULT_IMAGE = process.env.OPENCLAW_IMAGE || "ghcr.io/openclaw/openclaw:latest";
 const DEFAULT_VERTEX_IMAGE = process.env.OPENCLAW_VERTEX_IMAGE || DEFAULT_IMAGE;
@@ -2029,8 +2030,12 @@ Use this table to track verified peer OpenClaw instances.
     // Save .env
     try {
       const envPath = join(instanceDir, ".env");
-      await writeFile(envPath, buildSavedInstanceEnvContent(config, name), { mode: 0o600 });
+      const envContent = buildSavedInstanceEnvContent(config, name);
+      await writeFile(envPath, envContent, { mode: 0o600 });
       log(`Instance config saved to ${envPath}`);
+
+      // Save deployment history
+      await saveDeploymentHistory(config, envContent, false);
     } catch {
       log("Could not save .env file");
     }

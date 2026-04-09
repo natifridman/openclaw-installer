@@ -16,6 +16,7 @@ import type {
 import { namespaceName, deriveModel, detectUnavailableProvider, generateToken, usesDefaultEnvSecretRef } from "./k8s-helpers.js";
 import { loadWorkspaceFiles } from "./k8s-agent.js";
 import { loadAgentSourceBundle, loadAgentSourceCronJobs, loadAgentSourceExecApprovals, loadAgentSourceWorkspaceTree } from "./agent-source.js";
+import { saveDeploymentHistory } from "./deployment-history.js";
 import {
   namespaceManifest,
   pvcManifest,
@@ -478,13 +479,17 @@ export class KubernetesDeployer implements Deployer {
         openaiApiKeyRef: config.openaiApiKeyRef,
         telegramBotTokenRef: config.telegramBotTokenRef,
       };
+      const configContent = JSON.stringify(savedConfig, null, 2);
       writeFileSync(
         join(configDir, "deploy-config.json"),
-        JSON.stringify(savedConfig, null, 2),
+        configContent,
         { mode: 0o600 },
       );
       writeFileSync(join(configDir, "gateway-token"), gatewayToken + "\n", { mode: 0o600 });
       log(`Deploy config saved to ${configDir}/deploy-config.json`);
+
+      // Save deployment history
+      await saveDeploymentHistory(savedConfig, configContent, true);
     } catch {
       log("Could not save deploy config to host");
     }

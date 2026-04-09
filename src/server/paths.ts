@@ -32,3 +32,11 @@ export function installerLocalInstanceDir(name: string): string {
 export function installerK8sInstanceDir(namespace: string): string {
   return join(installerDataDir(), "k8s", namespace);
 }
+
+export function installerLocalHistoryDir(name: string): string {
+  return join(installerLocalInstanceDir(name), "history");
+}
+
+export function installerK8sHistoryDir(namespace: string): string {
+  return join(installerK8sInstanceDir(namespace), "history");
+}
