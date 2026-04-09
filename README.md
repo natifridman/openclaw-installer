@@ -241,3 +241,18 @@ That keeps runtime state, config, pairing data, cron state, and plugin state out
 - [ ] GitOps-backed workspace sync
 - [ ] Skill import from git repos
 - [ ] SSH deployer (remote host)
+
+## Development
+
+**Pre-commit checklist:**
+```bash
+npm run build    # Compiles server + installer provider plugins (catches type errors)
+npm test         # Runs all vitest tests
+npm run lint     # ESLint checks
+```
+
+**Documentation:**
+- [AGENTS.md](AGENTS.md) - Development guide and conventions
+- [docs/ci-cd.md](docs/ci-cd.md) - CI/CD pipeline and branch protection setup
+
+**CI/CD:** All pull requests are validated by GitHub Actions (build, test, lint). See [docs/ci-cd.md](docs/ci-cd.md) for details.

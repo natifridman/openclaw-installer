@@ -4,3 +4,4 @@ dist/
 .env.*
 provider-plugins/*/src/*.js
 provider-plugins/*/src/*.js.map
+test-results.xml
